@@ -1,0 +1,26 @@
+# Lakehouse Ops Connector Linter Configuration
+#
+# This file configures which lint rules are enabled and their severity levels.
+# You can disable rules globally, override severities, or exempt specific connectors.
+
+# Globally disabled rules (applies to all connectors)
+# disabled_rules = ["naming-convention", "sensitive-data"]
+disabled_rules = []
+
+# Override rule severities
+# Options: "error", "warning", "info"
+[rule_severities]
+# Example: Downgrade naming convention from warning to info
+# naming-convention = "info"
+
+# Example: Upgrade sensitive data detection to error
+# sensitive-data = "error"
+
+# Per-connector rule exemptions
+# Format: connector-name = ["rule-id-1", "rule-id-2"]
+[connector_exemptions]
+# Example: Allow legacy-connector to skip naming convention checks
+# legacy-connector = ["naming-convention"]
+
+# Example: Allow test-connector to have hardcoded passwords (for testing only!)
+# test-connector = ["sensitive-data"]

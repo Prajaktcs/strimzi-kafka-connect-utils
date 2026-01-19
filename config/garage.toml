@@ -1,0 +1,17 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+replication_mode = "none" # Single node for local dev
+
+[s3_api]
+s3_region = "us-east-1"
+api_bind_addr = "[::]:3900" # Bind S3 to port 3900
+root_domain = ".s3.local"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.local"
+enabled = true
+
+[rpc]
+bind_addr = "[::]:3901"

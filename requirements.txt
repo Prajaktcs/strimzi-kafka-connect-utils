@@ -1,0 +1,13 @@
+# Core dependencies
+streamlit>=1.40.0
+pydantic>=2.10.0
+tomli>=2.2.0
+
+# Kafka
+confluent-kafka>=2.7.0
+
+# HTTP client
+requests>=2.32.0
+
+# Logging
+python-json-logger>=2.0.7

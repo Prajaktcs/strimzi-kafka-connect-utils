@@ -1,0 +1,29 @@
+# Legacy Connector with Rule Exemptions
+# This example shows how to disable linter rules using comments
+
+# Disable naming-convention and sensitive-data rules for this file
+# lint-disable: naming-convention, sensitive-data
+
+# This connector name would normally fail naming-convention checks
+name: legacy__connector__with__issues
+connector.class: io.debezium.connector.postgresql.PostgresConnector
+
+# These would normally trigger sensitive-data warnings
+database.hostname: postgres-source
+database.port: 5432
+database.user: postgres
+database.password: hardcoded_password_example
+database.dbname: legacy_db
+
+# Topic configuration
+topic.prefix: legacy
+plugin.name: pgoutput
+slot.name: legacy_slot
+publication.name: legacy_publication
+
+# Schema history
+schema.history.internal.kafka.bootstrap.servers: redpanda:29092
+schema.history.internal.kafka.topic: schema-history.legacy
+
+# Snapshot configuration
+snapshot.mode: initial

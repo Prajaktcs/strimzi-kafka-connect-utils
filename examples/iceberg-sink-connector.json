@@ -1,0 +1,18 @@
+{
+  "name": "iceberg-sink-connector",
+  "config": {
+    "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
+    "tasks.max": "1",
+    "topics": "lakehouse.public.users,lakehouse.public.orders",
+    "iceberg.catalog.type": "hadoop",
+    "iceberg.catalog.warehouse": "s3a://warehouse/iceberg",
+    "iceberg.catalog.s3.endpoint": "http://garage:3900",
+    "iceberg.catalog.s3.access-key-id": "YOUR_ACCESS_KEY",
+    "iceberg.catalog.s3.secret-access-key": "YOUR_SECRET_KEY",
+    "iceberg.catalog.s3.path-style-access": "true",
+    "iceberg.tables": "lakehouse.public.users=users,lakehouse.public.orders=orders",
+    "iceberg.tables.auto-create-enabled": "true",
+    "iceberg.control.commit.interval-ms": "60000",
+    "iceberg.kafka.auto.offset.reset": "earliest"
+  }
+}

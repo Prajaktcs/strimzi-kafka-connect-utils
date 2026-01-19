@@ -1,0 +1,30 @@
+# Debezium PostgreSQL Source Connector Example
+# This connector captures changes from a PostgreSQL database
+
+name: postgres-source-connector
+connector.class: io.debezium.connector.postgresql.PostgresConnector
+tasks.max: 1
+
+# Database connection
+database.hostname: postgres-source
+database.port: 5432
+database.user: postgres
+database.password: password
+database.dbname: source_db
+
+# Topic configuration
+topic.prefix: lakehouse
+plugin.name: pgoutput
+slot.name: debezium_slot
+publication.name: debezium_publication
+
+# Schema history
+schema.history.internal.kafka.bootstrap.servers: redpanda:29092
+schema.history.internal.kafka.topic: schema-history.lakehouse
+
+# Snapshot configuration
+snapshot.mode: initial
+
+# Notifications
+notification.enabled.channels: sink
+notification.sink.topic.name: debezium.notifications

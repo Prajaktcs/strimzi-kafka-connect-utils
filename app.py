@@ -5,8 +5,6 @@ A unified platform to validate, monitor, and control Kafka Connect deployments.
 """
 
 import streamlit as st
-import json
-from strimzi_ops.validator import ConnectorValidator
 
 # Page configuration
 st.set_page_config(
@@ -38,124 +36,16 @@ if 'config' not in st.session_state:
 
 # Title
 st.title("🔌 Strimzi Ops Platform")
-st.markdown("Validate, Monitor, and Control your Kafka Connect deployments")
+st.markdown("Monitor and Control your Kafka Connect deployments")
 
 # Sidebar navigation
 page = st.sidebar.selectbox(
     "Navigation",
-    ["Linter", "Dashboard", "Monitor", "Control"]
+    ["Dashboard", "Monitor", "Control"]
 )
 
-# Linter Page (Primary Feature)
-if page == "Linter":
-    st.header("✅ Connector Configuration Linter")
-    st.markdown("Lint your Kafka Connect connector configurations with configurable rules")
-
-    # Show linter configuration info
-    with st.expander("ℹ️  About the Linter"):
-        st.markdown("""
-        The linter checks your connector configurations for common issues and best practices.
-
-        **Features:**
-        - Configurable rules via `.lintrc.toml`
-        - Per-connector rule exemptions
-        - Severity levels: Error, Warning, Info
-        - Inline rule disabling using comments (YAML/JSON)
-
-        **Example: Disable specific rules with comments**
-        ```yaml
-        # lint-disable: naming-convention, sensitive-data
-        name: my-connector
-        connector.class: io.debezium.connector.postgresql.PostgresConnector
-        tasks.max: 1
-        ```
-
-        **Supported comment directives:**
-        - `# lint-disable: rule1, rule2` - Disable rules for this file
-        - `# lint-disable-file: rule1` - Alternative syntax
-        """)
-
-    # Input method selection
-    input_method = st.radio(
-        "Input Method",
-        ["YAML/JSON Editor", "Upload File"]
-    )
-
-    config_text = ""
-    file_format = "auto"
-
-    if input_method == "YAML/JSON Editor":
-        config_text = st.text_area(
-            "Connector Configuration (YAML or JSON)",
-            height=300,
-            placeholder='# Use YAML with comments to disable rules\n# lint-disable: naming-convention\nname: my-connector\nconnector.class: ...\n'
-        )
-    else:
-        uploaded_file = st.file_uploader("Upload Configuration File", type=['json', 'yaml', 'yml'])
-        if uploaded_file:
-            config_text = uploaded_file.read().decode('utf-8')
-            # Detect format from file extension
-            if uploaded_file.name.endswith(('.yaml', '.yml')):
-                file_format = "yaml"
-                st.code(config_text, language='yaml')
-            else:
-                file_format = "json"
-                st.code(config_text, language='json')
-
-    if st.button("Lint Configuration"):
-        if config_text:
-            try:
-                validator = ConnectorValidator()
-                result = validator.validate_text(config_text, format=file_format)
-
-                # Display summary
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if result['summary']['errors'] > 0:
-                        st.metric("Errors", result['summary']['errors'], delta=None, delta_color="inverse")
-                    else:
-                        st.metric("Errors", 0)
-
-                with col2:
-                    st.metric("Warnings", result['summary']['warnings'])
-
-                with col3:
-                    st.metric("Info", result['summary']['info'])
-
-                # Display results
-                if result['valid']:
-                    if result['summary']['warnings'] == 0 and result['summary']['info'] == 0:
-                        st.success("✅ Configuration is perfect! No issues found.")
-                    else:
-                        st.success("✅ Configuration is valid (no errors)")
-                else:
-                    st.error("❌ Configuration has errors")
-
-                # Show detailed results
-                if result['results']:
-                    st.subheader("Lint Results")
-
-                    # Group by severity
-                    errors = validator.get_errors(result['results'])
-                    warnings = validator.get_warnings(result['results'])
-
-                    if errors:
-                        st.markdown("### ❌ Errors")
-                        for lint_result in errors:
-                            st.error(str(lint_result))
-
-                    if warnings:
-                        st.markdown("### ⚠️  Warnings")
-                        for lint_result in warnings:
-                            st.warning(str(lint_result))
-
-            except (json.JSONDecodeError, ValueError) as e:
-                st.error(f"Invalid configuration format: {e}")
-        else:
-            st.warning("Please provide a configuration to validate")
-
 # Dashboard Page
-elif page == "Dashboard":
+if page == "Dashboard":
     st.header("📊 Dashboard")
     st.markdown("Overview of your Kafka Connect deployment")
 

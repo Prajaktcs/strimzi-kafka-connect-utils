@@ -24,7 +24,7 @@ This is the recommended setup for actual use:
 - **Strimzi Operator**: 0.50.0
 - **Kafka**: 3.10.0 (Managed by Strimzi operator)
 - **Kafka Connect**: Deployed via Strimzi KafkaConnect CRD with Debezium 3.1.2
-- **Strimzi Ops**: Python 3.12+ application that connects remotely via:
+- **Strimzi Ops**: Python 3.14+ application that connects remotely via:
   - Kafka Connect REST API (port 8083)
   - Kafka Bootstrap Servers (port 9092)
 
@@ -66,14 +66,14 @@ For testing locally, use the provided Kubernetes manifests:
 - **Kafka**: 3.10.0 (single-node cluster)
 - **Database**: PostgreSQL 16 with CDC enabled
 - **Kafka Connect**: With Debezium 3.1.2 (PostgreSQL & MySQL connectors)
-- **App Logic**: Python 3.12+ (Streamlit + Confluent Kafka + Pydantic)
+- **App Logic**: Python 3.14+ (Streamlit + Confluent Kafka + Pydantic)
 
 See the "Local Development Environment" section below for details.
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- Python 3.12 or higher
+- Python 3.14 or higher
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
 - Git
 
@@ -202,12 +202,14 @@ uv run strimzi-lint lint --strict connector.yaml
 ```
 
 **Features:**
+
 - Validates YAML and JSON configurations
 - Comment-based rule disabling (`# lint-disable: rule-name`)
 - Configurable rules via `.lintrc.toml`
 - Multiple output formats (human-readable and JSON)
 
 **Example with comment-based disabling:**
+
 ```yaml
 # lint-disable: naming-convention, sensitive-data
 name: legacy-connector
@@ -406,6 +408,7 @@ make deploy
 ```
 
 This will:
+
 1. Install Strimzi operator (if not already installed)
 2. Create namespace `kafka`
 3. Deploy PostgreSQL with CDC enabled
@@ -553,6 +556,7 @@ docker exec -it garage /garage bucket allow warehouse --read --write --key lakeh
 ### Configuration Validation Errors
 
 Ensure your connector configuration matches the Pydantic models in `strimzi_ops/validator.py`. Common issues:
+
 - Missing required fields
 - Incorrect data types
 - Invalid connector class names

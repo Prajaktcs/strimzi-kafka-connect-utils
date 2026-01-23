@@ -1,0 +1,56 @@
+# Example GitHub Actions workflow for linting connector configurations
+# Copy this to .github/workflows/lint-connectors.yml to enable
+
+name: Lint Connector Configurations
+
+on:
+  pull_request:
+    paths:
+      - 'connectors/**/*.yaml'
+      - 'connectors/**/*.yml'
+      - 'connectors/**/*.json'
+  push:
+    branches:
+      - main
+    paths:
+      - 'connectors/**/*.yaml'
+      - 'connectors/**/*.yml'
+      - 'connectors/**/*.json'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint connector configurations
+        run: |
+          EXIT_CODE=0
+          for file in connectors/**/*.{yaml,yml,json}; do
+            if [ -f "$file" ]; then
+              echo "Linting $file..."
+              uv run strimzi-lint lint --strict "$file" || EXIT_CODE=$?
+            fi
+          done
+          exit $EXIT_CODE
+
+      - name: Lint with JSON output (for reporting)
+        if: always()
+        run: |
+          for file in connectors/**/*.{yaml,yml,json}; do
+            if [ -f "$file" ]; then
+              echo "Results for $file:"
+              uv run strimzi-lint lint --json "$file"
+            fi
+          done

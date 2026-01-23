@@ -1,9 +1,11 @@
 """Monitor for real-time snapshot tracking via Debezium Notifications."""
 
-from confluent_kafka import Consumer, KafkaError
-from typing import Dict, Any, Optional, Callable
 import json
 import logging
+from collections.abc import Callable
+from typing import Any
+
+from confluent_kafka import Consumer, KafkaError
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ class DebeziumNotificationMonitor:
         """
         self.bootstrap_servers = bootstrap_servers
         self.notification_topic = notification_topic
-        self.consumer: Optional[Consumer] = None
+        self.consumer: Consumer | None = None
 
     def start(self, group_id: str = "strimzi-ops-monitor") -> None:
         """
@@ -30,11 +32,11 @@ class DebeziumNotificationMonitor:
         Args:
             group_id: Consumer group ID
         """
-        config = {
-            'bootstrap.servers': self.bootstrap_servers,
-            'group.id': group_id,
-            'auto.offset.reset': 'latest',
-            'enable.auto.commit': True
+        config: dict[str, str | int | float | bool | None] = {
+            "bootstrap.servers": self.bootstrap_servers,
+            "group.id": group_id,
+            "auto.offset.reset": "latest",
+            "enable.auto.commit": True,
         }
 
         self.consumer = Consumer(config)
@@ -47,7 +49,7 @@ class DebeziumNotificationMonitor:
             self.consumer.close()
             logger.info("Stopped notification monitor")
 
-    def poll(self, timeout: float = 1.0) -> Optional[Dict[str, Any]]:
+    def poll(self, timeout: float = 1.0) -> dict[str, Any] | None:
         """
         Poll for a single notification message.
 
@@ -65,24 +67,26 @@ class DebeziumNotificationMonitor:
         if msg is None:
             return None
 
-        if msg.error():
-            if msg.error().code() == KafkaError._PARTITION_EOF:
+        error = msg.error()
+        if error:
+            if error.code() == KafkaError._PARTITION_EOF:  # type: ignore[attr-defined]
                 logger.debug("Reached end of partition")
             else:
-                logger.error(f"Consumer error: {msg.error()}")
+                logger.error(f"Consumer error: {error}")
             return None
 
         try:
-            notification = json.loads(msg.value().decode('utf-8'))
+            value = msg.value()
+            if value is None:
+                return None
+            notification: dict[str, Any] = json.loads(value.decode("utf-8"))
             return notification
         except json.JSONDecodeError as e:
             logger.error(f"Failed to decode notification: {e}")
             return None
 
     def consume_notifications(
-        self,
-        callback: Callable[[Dict[str, Any]], None],
-        duration_seconds: Optional[int] = None
+        self, callback: Callable[[dict[str, Any]], None], duration_seconds: int | None = None
     ) -> None:
         """
         Consume notifications and pass them to a callback function.
@@ -95,6 +99,7 @@ class DebeziumNotificationMonitor:
             raise RuntimeError("Monitor not started. Call start() first.")
 
         import time
+
         start_time = time.time()
 
         try:
@@ -117,9 +122,9 @@ class SnapshotTracker:
 
     def __init__(self):
         """Initialize the snapshot tracker."""
-        self.snapshots: Dict[str, Dict[str, Any]] = {}
+        self.snapshots: dict[str, dict[str, Any]] = {}
 
-    def process_notification(self, notification: Dict[str, Any]) -> None:
+    def process_notification(self, notification: dict[str, Any]) -> None:
         """
         Process a Debezium notification and update snapshot state.
 
@@ -128,6 +133,9 @@ class SnapshotTracker:
         """
         notification_type = notification.get("type")
         connector = notification.get("aggregateType")
+
+        if not isinstance(connector, str):
+            return
 
         if notification_type == "STARTED":
             self._handle_snapshot_started(connector, notification)
@@ -138,26 +146,28 @@ class SnapshotTracker:
         elif notification_type == "ABORTED":
             self._handle_snapshot_aborted(connector, notification)
 
-    def _handle_snapshot_started(self, connector: str, notification: Dict[str, Any]) -> None:
+    def _handle_snapshot_started(self, connector: str, notification: dict[str, Any]) -> None:
         """Handle snapshot started notification."""
         logger.info(f"Snapshot started for connector: {connector}")
         self.snapshots[connector] = {
             "status": "STARTED",
             "start_time": notification.get("timestamp"),
             "progress": 0,
-            "notification": notification
+            "notification": notification,
         }
 
-    def _handle_snapshot_progress(self, connector: str, notification: Dict[str, Any]) -> None:
+    def _handle_snapshot_progress(self, connector: str, notification: dict[str, Any]) -> None:
         """Handle snapshot progress notification."""
         if connector in self.snapshots:
             data = notification.get("data", {})
             self.snapshots[connector]["status"] = "IN_PROGRESS"
             self.snapshots[connector]["progress"] = data.get("progress", 0)
             self.snapshots[connector]["notification"] = notification
-            logger.info(f"Snapshot progress for {connector}: {self.snapshots[connector]['progress']}%")
+            logger.info(
+                f"Snapshot progress for {connector}: {self.snapshots[connector]['progress']}%"
+            )
 
-    def _handle_snapshot_completed(self, connector: str, notification: Dict[str, Any]) -> None:
+    def _handle_snapshot_completed(self, connector: str, notification: dict[str, Any]) -> None:
         """Handle snapshot completed notification."""
         logger.info(f"Snapshot completed for connector: {connector}")
         if connector in self.snapshots:
@@ -166,7 +176,7 @@ class SnapshotTracker:
             self.snapshots[connector]["end_time"] = notification.get("timestamp")
             self.snapshots[connector]["notification"] = notification
 
-    def _handle_snapshot_aborted(self, connector: str, notification: Dict[str, Any]) -> None:
+    def _handle_snapshot_aborted(self, connector: str, notification: dict[str, Any]) -> None:
         """Handle snapshot aborted notification."""
         logger.warning(f"Snapshot aborted for connector: {connector}")
         if connector in self.snapshots:
@@ -174,7 +184,7 @@ class SnapshotTracker:
             self.snapshots[connector]["end_time"] = notification.get("timestamp")
             self.snapshots[connector]["notification"] = notification
 
-    def get_snapshot_status(self, connector: str) -> Optional[Dict[str, Any]]:
+    def get_snapshot_status(self, connector: str) -> dict[str, Any] | None:
         """
         Get snapshot status for a connector.
 
@@ -186,7 +196,7 @@ class SnapshotTracker:
         """
         return self.snapshots.get(connector)
 
-    def get_all_snapshots(self) -> Dict[str, Dict[str, Any]]:
+    def get_all_snapshots(self) -> dict[str, dict[str, Any]]:
         """
         Get all snapshot statuses.
 

@@ -1,6 +1,7 @@
 """Validator for Kafka Connect connector configurations using the linter."""
 
-from typing import Dict, Any
+from typing import Any
+
 from .linter import ConnectorLinter, LintResult, Severity
 
 
@@ -16,7 +17,7 @@ class ConnectorValidator:
         """
         self.linter = ConnectorLinter(linter_config_path)
 
-    def validate_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """
         Validate connector configuration.
 
@@ -33,10 +34,10 @@ class ConnectorValidator:
             "valid": summary["errors"] == 0,
             "results": results,
             "summary": summary,
-            "formatted": self.linter.format_results(results)
+            "formatted": self.linter.format_results(results),
         }
 
-    def validate_text(self, text: str, format: str = "auto") -> Dict[str, Any]:
+    def validate_text(self, text: str, format: str = "auto") -> dict[str, Any]:
         """
         Validate connector configuration from raw text (YAML or JSON).
         Supports comment-based lint directives.
@@ -55,7 +56,7 @@ class ConnectorValidator:
             "valid": summary["errors"] == 0,
             "results": results,
             "summary": summary,
-            "formatted": self.linter.format_results(results)
+            "formatted": self.linter.format_results(results),
         }
 
     def has_errors(self, results: list[LintResult]) -> bool:

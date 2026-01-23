@@ -1,8 +1,9 @@
 """Control module for managing Kafka Connect connectors."""
 
-import requests
-from typing import Dict, Any, List, Optional
 import logging
+from typing import Any
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +18,14 @@ class ConnectorController:
         Args:
             connect_url: Kafka Connect REST API URL
         """
-        self.connect_url = connect_url.rstrip('/')
+        self.connect_url = connect_url.rstrip("/")
         self.session = requests.Session()
-        self.session.headers.update({
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        })
+        self.session.headers.update(
+            {"Content-Type": "application/json", "Accept": "application/json"}
+        )
 
     def _make_request(
-        self,
-        method: str,
-        endpoint: str,
-        data: Optional[Dict[str, Any]] = None
+        self, method: str, endpoint: str, data: dict[str, Any] | None = None
     ) -> requests.Response:
         """
         Make a request to Kafka Connect REST API.
@@ -63,7 +60,7 @@ class ConnectorController:
             logger.error(f"Request failed: {e}")
             raise
 
-    def list_connectors(self) -> List[str]:
+    def list_connectors(self) -> list[str]:
         """
         List all connectors.
 
@@ -71,9 +68,10 @@ class ConnectorController:
             List of connector names
         """
         response = self._make_request("GET", "connectors")
-        return response.json()
+        result: list[str] = response.json()
+        return result
 
-    def get_connector_info(self, connector_name: str) -> Dict[str, Any]:
+    def get_connector_info(self, connector_name: str) -> dict[str, Any]:
         """
         Get connector information.
 
@@ -84,9 +82,10 @@ class ConnectorController:
             Connector information dictionary
         """
         response = self._make_request("GET", f"connectors/{connector_name}")
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
-    def get_connector_status(self, connector_name: str) -> Dict[str, Any]:
+    def get_connector_status(self, connector_name: str) -> dict[str, Any]:
         """
         Get connector status.
 
@@ -97,9 +96,10 @@ class ConnectorController:
             Connector status dictionary
         """
         response = self._make_request("GET", f"connectors/{connector_name}/status")
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
-    def get_connector_config(self, connector_name: str) -> Dict[str, Any]:
+    def get_connector_config(self, connector_name: str) -> dict[str, Any]:
         """
         Get connector configuration.
 
@@ -110,9 +110,10 @@ class ConnectorController:
             Connector configuration dictionary
         """
         response = self._make_request("GET", f"connectors/{connector_name}/config")
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
-    def create_connector(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def create_connector(self, config: dict[str, Any]) -> dict[str, Any]:
         """
         Create a new connector.
 
@@ -124,9 +125,10 @@ class ConnectorController:
         """
         response = self._make_request("POST", "connectors", data=config)
         logger.info(f"Created connector: {config.get('name')}")
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
-    def update_connector(self, connector_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def update_connector(self, connector_name: str, config: dict[str, Any]) -> dict[str, Any]:
         """
         Update connector configuration.
 
@@ -139,7 +141,8 @@ class ConnectorController:
         """
         response = self._make_request("PUT", f"connectors/{connector_name}/config", data=config)
         logger.info(f"Updated connector: {connector_name}")
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result
 
     def delete_connector(self, connector_name: str) -> None:
         """
@@ -193,10 +196,8 @@ class ConnectorController:
         logger.info(f"Restarted task {task_id} for connector: {connector_name}")
 
     def trigger_snapshot(
-        self,
-        connector_name: str,
-        snapshot_type: str = "incremental"
-    ) -> Dict[str, Any]:
+        self, connector_name: str, snapshot_type: str = "incremental"
+    ) -> dict[str, Any]:
         """
         Trigger a snapshot for a Debezium connector.
 
@@ -217,11 +218,11 @@ class ConnectorController:
 
         # Note: Actual snapshot triggering may require sending signals to Kafka topics
         # depending on Debezium version and configuration
-        response = self._make_request("POST", endpoint)
+        _ = self._make_request("POST", endpoint)
 
         return {"status": "snapshot_triggered", "connector": connector_name}
 
-    def get_connector_plugins(self) -> List[Dict[str, Any]]:
+    def get_connector_plugins(self) -> list[dict[str, Any]]:
         """
         Get list of available connector plugins.
 
@@ -229,13 +230,12 @@ class ConnectorController:
             List of connector plugin information
         """
         response = self._make_request("GET", "connector-plugins")
-        return response.json()
+        result: list[dict[str, Any]] = response.json()
+        return result
 
     def validate_connector_config(
-        self,
-        plugin_class: str,
-        config: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, plugin_class: str, config: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Validate connector configuration.
 
@@ -248,4 +248,5 @@ class ConnectorController:
         """
         endpoint = f"connector-plugins/{plugin_class}/config/validate"
         response = self._make_request("PUT", endpoint, data=config)
-        return response.json()
+        result: dict[str, Any] = response.json()
+        return result

@@ -4,6 +4,8 @@ Strimzi Ops Platform - Streamlit Application
 A unified platform to validate, monitor, and control Kafka Connect deployments.
 """
 
+import json
+
 import streamlit as st
 
 # Page configuration

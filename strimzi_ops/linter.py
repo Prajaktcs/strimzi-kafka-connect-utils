@@ -1,17 +1,20 @@
 """Linter for Kafka Connect connector configurations with rule management."""
 
-from typing import Dict, Any, List, Optional, Set, Callable
-from enum import Enum
-from dataclasses import dataclass
-from pathlib import Path
-import tomli
 import json
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+import tomli
 from ruamel.yaml import YAML
 
 
 class Severity(str, Enum):
     """Rule severity levels."""
+
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -20,17 +23,14 @@ class Severity(str, Enum):
 @dataclass
 class LintResult:
     """Result of a lint check."""
+
     rule_id: str
     severity: Severity
     message: str
-    path: Optional[str] = None
+    path: str | None = None
 
     def __str__(self) -> str:
-        prefix = {
-            Severity.ERROR: "❌",
-            Severity.WARNING: "⚠️ ",
-            Severity.INFO: "ℹ️ "
-        }[self.severity]
+        prefix = {Severity.ERROR: "❌", Severity.WARNING: "⚠️ ", Severity.INFO: "ℹ️ "}[self.severity]
         location = f" at {self.path}" if self.path else ""
         return f"{prefix} [{self.rule_id}] {self.message}{location}"
 
@@ -38,13 +38,14 @@ class LintResult:
 @dataclass
 class Rule:
     """Lint rule definition."""
+
     id: str
     name: str
     description: str
     severity: Severity
-    check: Callable[[Dict[str, Any]], List[LintResult]]
+    check: Callable[[dict[str, Any]], list[LintResult]]
 
-    def __call__(self, config: Dict[str, Any]) -> List[LintResult]:
+    def __call__(self, config: dict[str, Any]) -> list[LintResult]:
         """Execute the rule check."""
         return self.check(config)
 
@@ -52,16 +53,16 @@ class Rule:
 class LinterConfig:
     """Configuration for the linter."""
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         """
         Initialize linter configuration.
 
         Args:
             config_path: Path to .lintrc.toml file
         """
-        self.disabled_rules: Set[str] = set()
-        self.rule_severities: Dict[str, Severity] = {}
-        self.connector_exemptions: Dict[str, Set[str]] = {}
+        self.disabled_rules: set[str] = set()
+        self.rule_severities: dict[str, Severity] = {}
+        self.connector_exemptions: dict[str, set[str]] = {}
 
         if config_path and Path(config_path).exists():
             self._load_config(config_path)
@@ -77,9 +78,7 @@ class LinterConfig:
 
         # Rule severity overrides
         if "rule_severities" in config:
-            self.rule_severities = {
-                k: Severity(v) for k, v in config["rule_severities"].items()
-            }
+            self.rule_severities = {k: Severity(v) for k, v in config["rule_severities"].items()}
 
         # Per-connector exemptions
         if "connector_exemptions" in config:
@@ -87,7 +86,7 @@ class LinterConfig:
                 k: set(v) for k, v in config["connector_exemptions"].items()
             }
 
-    def is_rule_enabled(self, rule_id: str, connector_name: Optional[str] = None) -> bool:
+    def is_rule_enabled(self, rule_id: str, connector_name: str | None = None) -> bool:
         """
         Check if a rule is enabled.
 
@@ -126,7 +125,7 @@ class LinterConfig:
 class ConnectorLinter:
     """Linter for Kafka Connect connector configurations."""
 
-    def __init__(self, config_path: Optional[str] = ".lintrc.toml"):
+    def __init__(self, config_path: str | None = ".lintrc.toml"):
         """
         Initialize the linter.
 
@@ -134,37 +133,41 @@ class ConnectorLinter:
             config_path: Path to linter configuration file
         """
         self.config = LinterConfig(config_path)
-        self.rules: List[Rule] = []
+        self.rules: list[Rule] = []
         self._register_builtin_rules()
 
     def _register_builtin_rules(self) -> None:
         """Register built-in lint rules."""
 
         # Required fields rule
-        def check_required_fields(config: Dict[str, Any]) -> List[LintResult]:
+        def check_required_fields(config: dict[str, Any]) -> list[LintResult]:
             results = []
             required = ["name", "connector.class"]
             for field in required:
                 if field not in config:
-                    results.append(LintResult(
-                        rule_id="required-field",
-                        severity=Severity.ERROR,
-                        message=f"Missing required field: {field}",
-                        path=field
-                    ))
+                    results.append(
+                        LintResult(
+                            rule_id="required-field",
+                            severity=Severity.ERROR,
+                            message=f"Missing required field: {field}",
+                            path=field,
+                        )
+                    )
             return results
 
-        self.rules.append(Rule(
-            id="required-field",
-            name="Required Fields",
-            description="Ensure required fields are present",
-            severity=Severity.ERROR,
-            check=check_required_fields
-        ))
+        self.rules.append(
+            Rule(
+                id="required-field",
+                name="Required Fields",
+                description="Ensure required fields are present",
+                severity=Severity.ERROR,
+                check=check_required_fields,
+            )
+        )
 
         # Naming convention rule
-        def check_naming_convention(config: Dict[str, Any]) -> List[LintResult]:
-            results = []
+        def check_naming_convention(config: dict[str, Any]) -> list[LintResult]:
+            results: list[LintResult] = []
             if "name" in config:
                 name = config["name"]
                 if not isinstance(name, str):
@@ -172,72 +175,86 @@ class ConnectorLinter:
 
                 # Check for valid characters
                 if not all(c.isalnum() or c in "-_" for c in name):
-                    results.append(LintResult(
-                        rule_id="naming-convention",
-                        severity=Severity.WARNING,
-                        message=f"Connector name '{name}' contains invalid characters",
-                        path="name"
-                    ))
+                    results.append(
+                        LintResult(
+                            rule_id="naming-convention",
+                            severity=Severity.WARNING,
+                            message=f"Connector name '{name}' contains invalid characters",
+                            path="name",
+                        )
+                    )
 
                 # Check length
                 if len(name) > 64:
-                    results.append(LintResult(
-                        rule_id="naming-convention",
-                        severity=Severity.WARNING,
-                        message=f"Connector name '{name}' is too long (max 64 characters)",
-                        path="name"
-                    ))
+                    results.append(
+                        LintResult(
+                            rule_id="naming-convention",
+                            severity=Severity.WARNING,
+                            message=f"Connector name '{name}' is too long (max 64 characters)",
+                            path="name",
+                        )
+                    )
 
             return results
 
-        self.rules.append(Rule(
-            id="naming-convention",
-            name="Naming Convention",
-            description="Validate connector naming conventions",
-            severity=Severity.WARNING,
-            check=check_naming_convention
-        ))
+        self.rules.append(
+            Rule(
+                id="naming-convention",
+                name="Naming Convention",
+                description="Validate connector naming conventions",
+                severity=Severity.WARNING,
+                check=check_naming_convention,
+            )
+        )
 
         # Tasks max validation
-        def check_tasks_max(config: Dict[str, Any]) -> List[LintResult]:
+        def check_tasks_max(config: dict[str, Any]) -> list[LintResult]:
             results = []
             if "tasks.max" in config:
                 try:
                     tasks = int(config["tasks.max"])
                     if tasks < 1:
-                        results.append(LintResult(
+                        results.append(
+                            LintResult(
+                                rule_id="tasks-max-value",
+                                severity=Severity.ERROR,
+                                message="tasks.max must be at least 1",
+                                path="tasks.max",
+                            )
+                        )
+                    elif tasks > 10:
+                        results.append(
+                            LintResult(
+                                rule_id="tasks-max-value",
+                                severity=Severity.WARNING,
+                                message=f"tasks.max is {tasks}, which may be too high",
+                                path="tasks.max",
+                            )
+                        )
+                except (ValueError, TypeError):
+                    results.append(
+                        LintResult(
                             rule_id="tasks-max-value",
                             severity=Severity.ERROR,
-                            message="tasks.max must be at least 1",
-                            path="tasks.max"
-                        ))
-                    elif tasks > 10:
-                        results.append(LintResult(
-                            rule_id="tasks-max-value",
-                            severity=Severity.WARNING,
-                            message=f"tasks.max is {tasks}, which may be too high",
-                            path="tasks.max"
-                        ))
-                except (ValueError, TypeError):
-                    results.append(LintResult(
-                        rule_id="tasks-max-value",
-                        severity=Severity.ERROR,
-                        message="tasks.max must be a valid integer",
-                        path="tasks.max"
-                    ))
+                            message="tasks.max must be a valid integer",
+                            path="tasks.max",
+                        )
+                    )
 
             return results
 
-        self.rules.append(Rule(
-            id="tasks-max-value",
-            name="Tasks Max Value",
-            description="Validate tasks.max configuration",
-            severity=Severity.WARNING,
-            check=check_tasks_max
-        ))
+        self.rules.append(
+            Rule(
+                id="tasks-max-value",
+                name="Tasks Max Value",
+                description="Validate tasks.max configuration",
+                severity=Severity.WARNING,
+                check=check_tasks_max,
+            )
+        )
 
         # Debezium snapshot mode
-        def check_snapshot_mode(config: Dict[str, Any]) -> List[LintResult]:
+        def check_snapshot_mode(config: dict[str, Any]) -> list[LintResult]:
             results = []
             connector_class = config.get("connector.class", "")
 
@@ -247,49 +264,61 @@ class ConnectorLinter:
                     valid_modes = ["initial", "always", "never", "when_needed", "schema_only"]
 
                     if mode not in valid_modes:
-                        results.append(LintResult(
-                            rule_id="debezium-snapshot-mode",
-                            severity=Severity.WARNING,
-                            message=f"Unknown snapshot.mode '{mode}'. Valid: {', '.join(valid_modes)}",
-                            path="snapshot.mode"
-                        ))
+                        results.append(
+                            LintResult(
+                                rule_id="debezium-snapshot-mode",
+                                severity=Severity.WARNING,
+                                message=f"Unknown snapshot.mode '{mode}'. Valid: {', '.join(valid_modes)}",
+                                path="snapshot.mode",
+                            )
+                        )
 
             return results
 
-        self.rules.append(Rule(
-            id="debezium-snapshot-mode",
-            name="Debezium Snapshot Mode",
-            description="Validate Debezium snapshot.mode values",
-            severity=Severity.WARNING,
-            check=check_snapshot_mode
-        ))
+        self.rules.append(
+            Rule(
+                id="debezium-snapshot-mode",
+                name="Debezium Snapshot Mode",
+                description="Validate Debezium snapshot.mode values",
+                severity=Severity.WARNING,
+                check=check_snapshot_mode,
+            )
+        )
 
         # Sensitive data detection
-        def check_sensitive_data(config: Dict[str, Any]) -> List[LintResult]:
+        def check_sensitive_data(config: dict[str, Any]) -> list[LintResult]:
             results = []
             sensitive_patterns = ["password", "secret", "key", "token"]
 
             for key, value in config.items():
                 if any(pattern in key.lower() for pattern in sensitive_patterns):
-                    if isinstance(value, str) and len(value) > 0 and value not in ["${env:VAR}", "REPLACE_ME"]:
-                        results.append(LintResult(
-                            rule_id="sensitive-data",
-                            severity=Severity.WARNING,
-                            message=f"Potential sensitive data in '{key}'. Consider using environment variables",
-                            path=key
-                        ))
+                    if (
+                        isinstance(value, str)
+                        and len(value) > 0
+                        and value not in ["${env:VAR}", "REPLACE_ME"]
+                    ):
+                        results.append(
+                            LintResult(
+                                rule_id="sensitive-data",
+                                severity=Severity.WARNING,
+                                message=f"Potential sensitive data in '{key}'. Consider using environment variables",
+                                path=key,
+                            )
+                        )
 
             return results
 
-        self.rules.append(Rule(
-            id="sensitive-data",
-            name="Sensitive Data Detection",
-            description="Detect hardcoded sensitive information",
-            severity=Severity.WARNING,
-            check=check_sensitive_data
-        ))
+        self.rules.append(
+            Rule(
+                id="sensitive-data",
+                name="Sensitive Data Detection",
+                description="Detect hardcoded sensitive information",
+                severity=Severity.WARNING,
+                check=check_sensitive_data,
+            )
+        )
 
-    def _parse_lint_directives(self, text: str) -> Set[str]:
+    def _parse_lint_directives(self, text: str) -> set[str]:
         """
         Parse lint directives from comments in YAML/JSON text.
 
@@ -310,8 +339,8 @@ class ConnectorLinter:
         # Match comment patterns for disabling rules
         # Note: Use [ \t] instead of \s to avoid matching newlines
         patterns = [
-            r'#[ \t]*lint-disable(?:-file)?:[ \t]*([\w ,-]+)',
-            r'#[ \t]*lint-disable(?:-file)?[ \t]+([\w ,-]+)',
+            r"#[ \t]*lint-disable(?:-file)?:[ \t]*([\w ,-]+)",
+            r"#[ \t]*lint-disable(?:-file)?[ \t]+([\w ,-]+)",
         ]
 
         for pattern in patterns:
@@ -319,12 +348,12 @@ class ConnectorLinter:
             for match in matches:
                 rules_str = match.group(1)
                 # Split by comma and strip whitespace
-                rules = [r.strip() for r in rules_str.split(',')]
+                rules = [r.strip() for r in rules_str.split(",")]
                 disabled_rules.update(rules)
 
         return disabled_rules
 
-    def lint_text(self, text: str, format: str = "auto") -> List[LintResult]:
+    def lint_text(self, text: str, format: str = "auto") -> list[LintResult]:
         """
         Lint a connector configuration from raw text.
 
@@ -348,15 +377,17 @@ class ConnectorLinter:
                 try:
                     yaml = YAML()
                     from io import StringIO
+
                     stream = StringIO(text)
                     config = yaml.load(stream)
                 except Exception:
-                    raise ValueError("Could not parse configuration as JSON or YAML")
+                    raise ValueError("Could not parse configuration as JSON or YAML") from None
         elif format == "json":
             config = json.loads(text)
         elif format == "yaml":
             yaml = YAML()
             from io import StringIO
+
             stream = StringIO(text)
             config = yaml.load(stream)
         else:
@@ -365,7 +396,9 @@ class ConnectorLinter:
         # Lint with comment-based disabled rules
         return self.lint(config, disabled_inline=disabled_from_comments)
 
-    def lint(self, config: Dict[str, Any], disabled_inline: Optional[Set[str]] = None) -> List[LintResult]:
+    def lint(
+        self, config: dict[str, Any], disabled_inline: set[str] | None = None
+    ) -> list[LintResult]:
         """
         Lint a connector configuration.
 
@@ -401,7 +434,7 @@ class ConnectorLinter:
 
         return results
 
-    def get_summary(self, results: List[LintResult]) -> Dict[str, int]:
+    def get_summary(self, results: list[LintResult]) -> dict[str, int]:
         """
         Get summary of lint results.
 
@@ -414,11 +447,11 @@ class ConnectorLinter:
         summary = {
             "errors": sum(1 for r in results if r.severity == Severity.ERROR),
             "warnings": sum(1 for r in results if r.severity == Severity.WARNING),
-            "info": sum(1 for r in results if r.severity == Severity.INFO)
+            "info": sum(1 for r in results if r.severity == Severity.INFO),
         }
         return summary
 
-    def format_results(self, results: List[LintResult]) -> str:
+    def format_results(self, results: list[LintResult]) -> str:
         """
         Format lint results as a string.
 
@@ -437,6 +470,8 @@ class ConnectorLinter:
 
         summary = self.get_summary(results)
         output.append("")
-        output.append(f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info")
+        output.append(
+            f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info"
+        )
 
         return "\n".join(output)

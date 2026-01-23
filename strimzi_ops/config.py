@@ -1,8 +1,9 @@
 """Configuration management for Strimzi Ops."""
 
-import tomli
 from pathlib import Path
 from typing import Any
+
+import tomli
 
 
 class Config:
@@ -29,29 +30,29 @@ class Config:
     @property
     def kafka_bootstrap_servers(self) -> str:
         """Get Kafka bootstrap servers."""
-        return self._config["kafka"]["bootstrap_servers"]
+        return str(self._config["kafka"]["bootstrap_servers"])
 
     @property
     def kafka_connect_url(self) -> str:
         """Get Kafka Connect REST API URL."""
-        return self._config["kafka"]["connect_url"]
+        return str(self._config["kafka"]["connect_url"])
 
     @property
     def storage_endpoint(self) -> str:
         """Get S3 storage endpoint URL."""
-        return self._config["storage"]["endpoint_url"]
+        return str(self._config["storage"]["endpoint_url"])
 
     @property
     def storage_access_key(self) -> str:
         """Get S3 access key."""
-        return self._config["storage"]["access_key"]
+        return str(self._config["storage"]["access_key"])
 
     @property
     def storage_secret_key(self) -> str:
         """Get S3 secret key."""
-        return self._config["storage"]["secret_key"]
+        return str(self._config["storage"]["secret_key"])
 
     @property
     def storage_bucket(self) -> str:
         """Get S3 bucket name."""
-        return self._config["storage"]["bucket"]
+        return str(self._config["storage"]["bucket"])

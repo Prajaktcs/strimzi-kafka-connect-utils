@@ -3,9 +3,8 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional
+
 from .validator import ConnectorValidator
-from .linter import Severity
 
 
 def lint_command(args: argparse.Namespace) -> int:
@@ -25,7 +24,7 @@ def lint_command(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             config_text = f.read()
     except Exception as e:
         print(f"Error reading file: {e}", file=sys.stderr)
@@ -34,9 +33,9 @@ def lint_command(args: argparse.Namespace) -> int:
     # Determine format
     format_type = args.format
     if format_type == "auto":
-        if config_path.suffix in ['.yaml', '.yml']:
+        if config_path.suffix in [".yaml", ".yml"]:
             format_type = "yaml"
-        elif config_path.suffix == '.json':
+        elif config_path.suffix == ".json":
             format_type = "json"
 
     # Initialize validator with linter config
@@ -53,6 +52,7 @@ def lint_command(args: argparse.Namespace) -> int:
     # Display results
     if args.json:
         import json
+
         output = {
             "valid": result["valid"],
             "summary": result["summary"],
@@ -61,10 +61,10 @@ def lint_command(args: argparse.Namespace) -> int:
                     "rule_id": r.rule_id,
                     "severity": r.severity.value,
                     "message": r.message,
-                    "path": r.path
+                    "path": r.path,
                 }
                 for r in result["results"]
-            ]
+            ],
         }
         print(json.dumps(output, indent=2))
     else:
@@ -76,7 +76,9 @@ def lint_command(args: argparse.Namespace) -> int:
 
         print()
         summary = result["summary"]
-        print(f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info")
+        print(
+            f"Summary: {summary['errors']} errors, {summary['warnings']} warnings, {summary['info']} info"
+        )
 
     # Exit with error code if there are errors
     if not result["valid"] or (args.strict and result["summary"]["warnings"] > 0):
@@ -103,7 +105,7 @@ Examples:
 
   # Strict mode (warnings also cause failure)
   strimzi-lint --strict connector.yaml
-"""
+""",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -112,32 +114,25 @@ Examples:
     lint_parser = subparsers.add_parser(
         "lint",
         help="Lint a connector configuration file",
-        description="Validate Kafka Connect connector configurations against linting rules"
+        description="Validate Kafka Connect connector configurations against linting rules",
     )
+    lint_parser.add_argument("file", help="Path to the connector configuration file (YAML or JSON)")
     lint_parser.add_argument(
-        "file",
-        help="Path to the connector configuration file (YAML or JSON)"
-    )
-    lint_parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         help="Path to linter configuration file (default: .lintrc.toml)",
-        default=None
+        default=None,
     )
     lint_parser.add_argument(
-        "-f", "--format",
+        "-f",
+        "--format",
         choices=["auto", "yaml", "json"],
         default="auto",
-        help="Configuration file format (default: auto-detect)"
+        help="Configuration file format (default: auto-detect)",
     )
+    lint_parser.add_argument("--json", action="store_true", help="Output results in JSON format")
     lint_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in JSON format"
-    )
-    lint_parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Treat warnings as errors (exit code 1)"
+        "--strict", action="store_true", help="Treat warnings as errors (exit code 1)"
     )
 
     # If no subcommand, default to lint for backward compatibility

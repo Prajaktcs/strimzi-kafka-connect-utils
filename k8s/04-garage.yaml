@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: garage-config
+  namespace: kafka
+data:
+  garage.toml: |
+    metadata_dir = "/var/lib/garage/meta"
+    data_dir = "/var/lib/garage/data"
+    replication_mode = "none"
+
+    [s3_api]
+    s3_region = "us-east-1"
+    api_bind_addr = "[::]:3900"
+    root_domain = ".s3.local"
+
+    [s3_web]
+    bind_addr = "[::]:3902"
+    root_domain = ".web.local"
+    enabled = true
+
+    [rpc]
+    bind_addr = "[::]:3901"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: kafka
+spec:
+  serviceName: "garage"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: garage
+  template:
+    metadata:
+      labels:
+        app: garage
+    spec:
+      containers:
+        - name: garage
+          image: dxflrs/garage:v2.1.0
+          ports:
+            - containerPort: 3900
+              name: s3
+            - containerPort: 3901
+              name: rpc
+            - containerPort: 3902
+              name: web
+          volumeMounts:
+            - name: config
+              mountPath: /etc/garage
+            - name: data
+              mountPath: /var/lib/garage
+          env:
+            - name: RUST_LOG
+              value: info
+      volumes:
+        - name: config
+          configMap:
+            name: garage-config
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage
+  namespace: kafka
+spec:
+  ports:
+    - port: 3900
+      name: s3
+      targetPort: 3900
+    - port: 3901
+      name: rpc
+      targetPort: 3901
+    - port: 3902
+      name: web
+      targetPort: 3902
+  selector:
+    app: garage

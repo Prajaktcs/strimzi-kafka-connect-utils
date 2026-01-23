@@ -3,7 +3,7 @@ set -e
 
 NAMESPACE="kafka"
 
-echo "🗑️  Destroying Strimzi Ops local development environment"
+echo "Destroying Strimzi Ops local development environment"
 echo "======================================================="
 echo ""
 
@@ -14,7 +14,7 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-echo "🔥 Deleting resources..."
+echo "Deleting resources..."
 
 # Delete in reverse order
 if kubectl get kafkaconnect my-connect-cluster -n ${NAMESPACE} &> /dev/null; then
@@ -25,6 +25,21 @@ fi
 if kubectl get kafka my-cluster -n ${NAMESPACE} &> /dev/null; then
     echo "  - Kafka cluster"
     kubectl delete -f 02-kafka.yaml
+fi
+
+if kubectl get deployment nessie -n ${NAMESPACE} &> /dev/null; then
+    echo "  - Nessie"
+    kubectl delete -f 05-iceberg-catalog.yaml
+fi
+
+if kubectl get job garage-setup -n ${NAMESPACE} &> /dev/null; then
+    echo "  - Garage Setup"
+    kubectl delete -f 04-garage-setup.yaml
+fi
+
+if kubectl get statefulset garage -n ${NAMESPACE} &> /dev/null; then
+    echo "  - Garage"
+    kubectl delete -f 04-garage.yaml
 fi
 
 if kubectl get statefulset postgres -n ${NAMESPACE} &> /dev/null; then
@@ -38,10 +53,11 @@ kubectl delete pvc --all -n ${NAMESPACE} 2>/dev/null || true
 
 # Delete namespace
 echo "  - Namespace"
-kubectl delete -f 00-namespace.yaml
+kubectl apply -f 00-namespace.yaml # Ensure file exists for delete if needed, but easier to just delete namespace
+kubectl delete namespace ${NAMESPACE} --wait=true || true
 
 echo ""
-echo "✅ All resources deleted"
+echo "All resources deleted"
 echo ""
 echo "Note: Strimzi operator is still installed in strimzi-system namespace."
 echo "To remove it:"

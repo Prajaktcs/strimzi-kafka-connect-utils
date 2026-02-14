@@ -69,13 +69,23 @@ kubectl apply -f 04-garage-setup.yaml
 echo "Waiting for Garage Setup to complete..."
 kubectl wait --for=condition=complete job/garage-setup -n ${NAMESPACE} --timeout=120s
 echo "Garage Setup complete"
-
-# Retrieve S3 Keys from Job logs
-echo "Retrieving S3 Credentials..."
-POD_NAME=$(kubectl get pods -n "${NAMESPACE}" -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
-echo "---------------------------------------------------"
-kubectl logs "${POD_NAME}" -n "${NAMESPACE}" | grep -E "Key ID|Secret Key" || true
-echo "---------------------------------------------------"
+# Retrieve S3 Keys from Job logs and store them in a Kubernetes Secret
+echo "Retrieving S3 credentials from Garage Setup logs..."
+POD_NAME=$(kubectl get pods -n ${NAMESPACE} -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
+CREDS_LOG=$(kubectl logs "$POD_NAME" -n "${NAMESPACE}" || true)
+ACCESS_KEY_ID=$(printf '%s\n' "$CREDS_LOG" | awk -F': ' '/Key ID/{print $2; exit}')
+SECRET_KEY=$(printf '%s\n' "$CREDS_LOG" | awk -F': ' '/Secret Key/{print $2; exit}')
+if [ -n "$ACCESS_KEY_ID" ] && [ -n "$SECRET_KEY" ]; then
+    # Store credentials in a Kubernetes Secret instead of printing them
+    kubectl delete secret garage-s3-credentials -n "${NAMESPACE}" 2>/dev/null || true
+    kubectl create secret generic garage-s3-credentials \
+        -n "${NAMESPACE}" \
+        --from-literal=accessKeyId="$ACCESS_KEY_ID" \
+        --from-literal=secretKey="$SECRET_KEY"
+    echo "S3 credentials stored in Kubernetes secret 'garage-s3-credentials' in namespace '${NAMESPACE}'."
+else
+    echo "Warning: Unable to parse S3 credentials from garage-setup job logs."
+fi
 
 # Deploy Nessie Catalog
 # Deploy Nessie Catalog

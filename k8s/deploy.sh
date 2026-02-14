@@ -72,12 +72,12 @@ echo "Garage Setup complete"
 
 # Retrieve S3 Keys from Job logs
 echo "Retrieving S3 Credentials..."
-POD_NAME=$(kubectl get pods -n ${NAMESPACE} -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
+POD_NAME=$(kubectl get pods -n "${NAMESPACE}" -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
 echo "---------------------------------------------------"
-kubectl logs $POD_NAME -n ${NAMESPACE} | grep "Key ID" || true
-kubectl logs $POD_NAME -n ${NAMESPACE} | grep "Secret Key" || true
+kubectl logs "${POD_NAME}" -n "${NAMESPACE}" | grep -E "Key ID|Secret Key" || true
 echo "---------------------------------------------------"
 
+# Deploy Nessie Catalog
 # Deploy Nessie Catalog
 echo "  - Nessie Iceberg Catalog"
 kubectl apply -f 05-iceberg-catalog.yaml

@@ -53,7 +53,6 @@ kubectl delete pvc --all -n ${NAMESPACE} 2>/dev/null || true
 
 # Delete namespace
 echo "  - Namespace"
-kubectl apply -f 00-namespace.yaml # Ensure file exists for delete if needed, but easier to just delete namespace
 kubectl delete namespace ${NAMESPACE} --wait=true || true
 
 echo ""

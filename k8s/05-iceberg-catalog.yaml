@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nessie
+  namespace: kafka
+  labels:
+    app: nessie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nessie
+  template:
+    metadata:
+      labels:
+        app: nessie
+    spec:
+      containers:
+        - name: nessie
+          image: projectnessie/nessie:latest
+          ports:
+            - containerPort: 19120
+              name: http
+          env:
+            - name: QUARKUS_HTTP_PORT
+              value: "19120"
+            - name: NESSIE_VERSION_STORE_TYPE
+              value: "ROCKSDB"
+            - name: NESSIE_VERSION_STORE_ROCKSDB_DB_PATH
+              value: "/var/lib/nessie/data"
+          volumeMounts:
+            - name: nessie-data
+              mountPath: /var/lib/nessie/data
+      volumes:
+        - name: nessie-data
+          persistentVolumeClaim:
+            claimName: nessie-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nessie
+  namespace: kafka
+spec:
+  ports:
+    - port: 19120
+      name: http
+      targetPort: 19120
+  selector:
+    app: nessie
+---
+# We need a PersistentVolumeClaim for Nessie's RocksDB if we want it to survive pod restarts
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nessie-data
+  namespace: kafka
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

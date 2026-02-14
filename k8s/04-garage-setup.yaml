@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: garage-setup
+  namespace: kafka
+spec:
+  template:
+    spec:
+      containers:
+        - name: setup
+          image: dxflrs/garage:v2.1.0
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "Waiting for Garage to be ready..."
+              until /garage status -h garage:3901 > /dev/null 2>&1; do
+                echo "Garage not ready yet..."
+                sleep 2
+              done
+
+              echo "Initializing layout..."
+              # Layout assignment might fail if already done, which is fine
+              /garage layout assign -h garage:3901 -z dc1 -c 1g garage || echo "Layout might be already assigned"
+              /garage layout apply -h garage:3901 --version 1 || echo "Layout might be already applied"
+
+              echo "Creating bucket 'warehouse'..."
+              /garage bucket create -h garage:3901 warehouse || echo "Bucket 'warehouse' might already exist"
+
+              echo "Creating key 'lakehouse-key'..."
+              # We need to capture the key info to create a secret potentially,
+              # but for now we'll just ensure it exists.
+              # In a real scenario, we'd probably pre-generate keys or use a specific secret.
+              # For this local dev setup, we'll try to create it, and then log the keys.
+              /garage key create -h garage:3901 lakehouse-key || echo "Key 'lakehouse-key' might already exist"
+
+              /garage bucket allow -h garage:3901 warehouse --read --write --key lakehouse-key
+
+              echo "Setup complete. Key info:"
+              /garage key info -h garage:3901 lakehouse-key
+          env:
+            - name: RUST_LOG
+              value: info
+      restartPolicy: OnFailure

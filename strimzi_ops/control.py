@@ -71,6 +71,17 @@ class ConnectorController:
         result: list[str] = response.json()
         return result
 
+    def get_all_connectors_status(self) -> dict[str, dict[str, Any]]:
+        """
+        Get status and info for all connectors.
+
+        Returns:
+            Dictionary mapping connector name to its status and info
+        """
+        response = self._make_request("GET", "connectors?expand=status&expand=info")
+        result: dict[str, dict[str, Any]] = response.json()
+        return result
+
     def get_connector_info(self, connector_name: str) -> dict[str, Any]:
         """
         Get connector information.

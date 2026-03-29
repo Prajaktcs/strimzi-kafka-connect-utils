@@ -193,95 +193,141 @@ elif page == "Control":
 
     # List connectors
     try:
-        connectors = st.session_state.controller.list_connectors()
+        all_info = st.session_state.controller.get_all_connectors_status()
 
-        if connectors:
-            selected_connector = st.selectbox("Select Connector", connectors)
+        if all_info:
+            # Table Header
+            header_cols = st.columns([2, 1, 1, 4])
+            header_cols[0].markdown("**Connector Name**")
+            header_cols[1].markdown("**State**")
+            header_cols[2].markdown("**Tasks**")
+            header_cols[3].markdown("**Actions**")
+            st.divider()
 
-            if selected_connector:
-                # Display connector status
-                status = st.session_state.controller.get_connector_status(selected_connector)
-                st.subheader(f"Status: {selected_connector}")
-                st.json(status)
+            for name, info in all_info.items():
+                status = info.get("status", {})
+                connector_state = status.get("connector", {}).get("state", "UNKNOWN")
+                tasks = status.get("tasks", [])
+                running_tasks = sum(1 for t in tasks if t.get("state") == "RUNNING")
+                total_tasks = len(tasks)
 
-                # Control buttons
-                col1, col2, col3, col4 = st.columns(4)
+                cols = st.columns([2, 1, 1, 4])
 
-                with col1:
-                    if st.button("▶️ Resume"):
-                        try:
-                            st.session_state.controller.resume_connector(selected_connector)
-                            st.success(f"Resumed {selected_connector}")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to resume: {e}")
+                # Name
+                cols[0].write(name)
 
-                with col2:
-                    if st.button("⏸️ Pause"):
-                        try:
-                            st.session_state.controller.pause_connector(selected_connector)
-                            st.success(f"Paused {selected_connector}")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to pause: {e}")
-
-                with col3:
-                    if st.button("🔄 Restart"):
-                        try:
-                            st.session_state.controller.restart_connector(selected_connector)
-                            st.success(f"Restarted {selected_connector}")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Failed to restart: {e}")
-
-                with col4:
-                    if st.button("📸 Trigger Snapshot"):
-                        try:
-                            result = st.session_state.controller.trigger_snapshot(
-                                selected_connector
-                            )
-                            st.success(f"Snapshot triggered: {result}")
-                        except Exception as e:
-                            st.error(f"Failed to trigger snapshot: {e}")
-
-                # Configuration editor
-                st.subheader("Configuration")
-                config = st.session_state.controller.get_connector_config(selected_connector)
-                config_json = st.text_area(
-                    "Edit Configuration", value=json.dumps(config, indent=2), height=300
+                # State with color
+                state_color = (
+                    "green"
+                    if connector_state == "RUNNING"
+                    else "orange"
+                    if connector_state == "PAUSED"
+                    else "red"
                 )
+                cols[1].markdown(f":{state_color}[{connector_state}]")
 
-                if st.button("Update Configuration"):
+                # Tasks
+                cols[2].write(f"{running_tasks}/{total_tasks}")
+
+                # Actions
+                btn_cols = cols[3].columns(5)
+
+                # Resume
+                if btn_cols[0].button("▶️", key=f"res_{name}", help="Resume"):
                     try:
-                        new_config = json.loads(config_json)
-                        st.session_state.controller.update_connector(selected_connector, new_config)
-                        st.success("Configuration updated successfully")
+                        st.session_state.controller.resume_connector(name)
+                        st.success(f"Resumed {name}")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Failed to update configuration: {e}")
+                        st.error(f"Failed to resume: {e}")
+
+                # Pause
+                if btn_cols[1].button("⏸️", key=f"pau_{name}", help="Pause"):
+                    try:
+                        st.session_state.controller.pause_connector(name)
+                        st.success(f"Paused {name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to pause: {e}")
+
+                # Restart
+                if btn_cols[2].button("🔄", key=f"res_all_{name}", help="Restart"):
+                    try:
+                        st.session_state.controller.restart_connector(name)
+                        st.success(f"Restarted {name}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to restart: {e}")
+
+                # Snapshot
+                if btn_cols[3].button("📸", key=f"snap_{name}", help="Trigger Snapshot"):
+                    try:
+                        result = st.session_state.controller.trigger_snapshot(name)
+                        st.success(f"Snapshot triggered for {name}")
+                    except Exception as e:
+                        st.error(f"Failed to trigger snapshot: {e}")
+
+                # Edit Config
+                if btn_cols[4].button("⚙️", key=f"edit_{name}", help="Edit Configuration"):
+                    st.session_state.editing_connector = name
+
+            # Configuration editor (shows below table when a connector is selected for editing)
+            if "editing_connector" in st.session_state:
+                edit_name = st.session_state.editing_connector
+                st.divider()
+                st.subheader(f"Edit Configuration: {edit_name}")
+
+                try:
+                    config = st.session_state.controller.get_connector_config(edit_name)
+                    # Filter out internal fields if necessary, but Connect API usually returns what's needed
+
+                    config_json = st.text_area(
+                        "JSON Configuration",
+                        value=json.dumps(config, indent=2),
+                        height=400,
+                        key=f"config_area_{edit_name}",
+                    )
+
+                    c1, c2 = st.columns([1, 5])
+                    if c1.button("Update", type="primary"):
+                        try:
+                            new_config = json.loads(config_json)
+                            st.session_state.controller.update_connector(edit_name, new_config)
+                            st.success(f"Configuration for {edit_name} updated")
+                            del st.session_state.editing_connector
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to update: {e}")
+
+                    if c2.button("Cancel"):
+                        del st.session_state.editing_connector
+                        st.rerun()
+
+                except Exception as e:
+                    st.error(f"Failed to fetch configuration: {e}")
 
         else:
             st.info("No connectors found")
 
             # Create new connector section
-            st.subheader("Create New Connector")
-            new_config = st.text_area(
-                "Connector Configuration (JSON)",
-                height=300,
-                placeholder='{\n  "name": "my-connector",\n  "config": {...}\n}',
-            )
+            with st.expander("➕ Create New Connector"):
+                new_config = st.text_area(
+                    "Connector Configuration (JSON)",
+                    height=300,
+                    placeholder='{\n  "name": "my-connector",\n  "config": {...}\n}',
+                )
 
-            if st.button("Create Connector"):
-                if new_config:
-                    try:
-                        config = json.loads(new_config)
-                        st.session_state.controller.create_connector(config)
-                        st.success("Connector created successfully")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to create connector: {e}")
-                else:
-                    st.warning("Please provide a configuration")
+                if st.button("Create Connector"):
+                    if new_config:
+                        try:
+                            config = json.loads(new_config)
+                            st.session_state.controller.create_connector(config)
+                            st.success("Connector created successfully")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to create connector: {e}")
+                    else:
+                        st.warning("Please provide a configuration")
 
     except Exception as e:
         st.error(f"Failed to fetch connectors: {e}")

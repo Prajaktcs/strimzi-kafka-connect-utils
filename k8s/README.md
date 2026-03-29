@@ -5,9 +5,10 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 ## What Gets Deployed
 
 1. **Strimzi Operator** - v0.50.0 - Kubernetes operator for managing Kafka
-2. **Kafka Cluster** - v3.10.0 - Single-node cluster (suitable for local development)
-3. **Kafka Connect** - v3.10.0 - With Debezium 3.1.2 (PostgreSQL & MySQL connectors)
-4. **PostgreSQL** - v16-alpine - Database configured for CDC (Change Data Capture)
+2. **Kafka Cluster** - v4.1.1 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
+3. **Kafka Connect** - v4.1.1 - With Debezium 3.4.0 (PostgreSQL connector)
+4. **PostgreSQL** - v18.2-alpine - Database configured for CDC (Change Data Capture)
+5. **Garage S3** - v2.1.0 - S3-compatible object storage for Iceberg
 
 ## Prerequisites
 
@@ -29,6 +30,8 @@ make status
 # Port forward services (each in a separate terminal)
 make port-forward        # Terminal 1: Kafka Connect API
 make port-forward-kafka  # Terminal 2: Kafka Bootstrap
+make port-forward-postgres # Terminal 3: PostgreSQL
+make port-forward-garage # Terminal 4: Garage S3
 
 # Clean up when done
 make destroy
@@ -88,8 +91,10 @@ The script will:
 - Check if Strimzi operator is installed (installs if needed)
 - Create namespace `kafka`
 - Deploy PostgreSQL with CDC configuration
-- Deploy Kafka cluster (takes ~3 minutes)
-- Deploy Kafka Connect with custom connectors (takes ~5-10 minutes on first run)
+- Deploy Garage S3 and run setup job
+- Deploy Kafka cluster in **KRaft mode** (takes ~3 minutes)
+- Deploy Kafka Connect with custom image (built locally)
+- Wait for everything to be ready
 
 ### 3. Verify Deployment
 
@@ -104,33 +109,21 @@ make status
 Expected output:
 ```
 Pods:
-  my-cluster-kafka-0                  1/1     Running
-  my-cluster-zookeeper-0              1/1     Running
-  my-connect-cluster-connect-xxx      1/1     Running
+  my-cluster-dual-role-0              1/1     Running
+  my-connect-cluster-connect-0        1/1     Running
   postgres-0                          1/1     Running
+  garage-0                            1/1     Running
 ```
 
 ### 4. Access Services
 
-Port forward to access from localhost (each in a separate terminal):
+Port forward to access from localhost:
 
 ```bash
-# Kafka Connect REST API (Terminal 1)
 make port-forward
-
-# Kafka Bootstrap (Terminal 2)
 make port-forward-kafka
-
-# PostgreSQL (Terminal 3 - optional)
 make port-forward-postgres
-```
-
-Or using kubectl directly:
-
-```bash
-kubectl port-forward svc/my-connect-cluster-connect-api 8083:8083 -n kafka
-kubectl port-forward svc/my-cluster-kafka-bootstrap 9092:9092 -n kafka
-kubectl port-forward svc/postgres 5432:5432 -n kafka
+make port-forward-garage
 ```
 
 Then configure `secrets.toml`:
@@ -138,6 +131,13 @@ Then configure `secrets.toml`:
 [kafka]
 bootstrap_servers = "localhost:9092"
 connect_url = "http://localhost:8083"
+
+[storage]
+type = "s3"
+endpoint_url = "http://localhost:3900"
+access_key = "..."
+secret_key = "..."
+bucket = "warehouse"
 ```
 
 ## Manifest Details
@@ -146,30 +146,16 @@ connect_url = "http://localhost:8083"
 Creates dedicated `kafka` namespace for all resources.
 
 ### 01-postgres.yaml
-Deploys PostgreSQL 16 Alpine with:
-- CDC configuration (`wal_level=logical`)
-- Persistent storage (1Gi)
-- Database: `source_db`
-- User: `postgres`
-- Password: `password`
+Deploys PostgreSQL 18.2 Alpine with logical replication enabled.
 
 ### 02-kafka.yaml
-Deploys single-node Kafka cluster via Strimzi:
-- Kafka version: 3.10.0
-- 1 broker replica
-- Internal listeners (plain and TLS)
-- ZooKeeper included
-- Persistent storage (5Gi for Kafka, 2Gi for ZooKeeper)
-- Resource limits suitable for local development
+Deploys single-node Kafka 4.1.1 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
 
 ### 03-kafka-connect.yaml
-Deploys Kafka Connect with:
-- Version: 3.10.0
-- Pre-installed connectors:
-  - Debezium PostgreSQL (v3.1.2.Final)
-  - Debezium MySQL (v3.1.2.Final)
-- Custom image build (automatic)
-- Connector resources enabled
+Deploys Kafka Connect with Debezium PostgreSQL connector. Uses a custom local image `my-connect-cluster:0.0.1`.
+
+### 04-garage.yaml
+Deploys Garage S3 v2.1.0 for object storage.
 
 ## Troubleshooting
 

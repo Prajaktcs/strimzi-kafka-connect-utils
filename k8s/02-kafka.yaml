@@ -1,13 +1,43 @@
 ---
-apiVersion: kafka.strimzi.io/v1beta2
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 5Gi
+        deleteClaim: false
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+---
+apiVersion: kafka.strimzi.io/v1
 kind: Kafka
 metadata:
   name: my-cluster
   namespace: kafka
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
 spec:
   kafka:
     version: 4.1.1
-    replicas: 1
+    metadataVersion: "4.1-IV0"
     listeners:
       - name: plain
         port: 9092
@@ -23,34 +53,6 @@ spec:
       transaction.state.log.min.isr: 1
       default.replication.factor: 1
       min.insync.replicas: 1
-      inter.broker.protocol.version: "4.1"
-    storage:
-      type: jbod
-      volumes:
-        - id: 0
-          type: persistent-claim
-          size: 5Gi
-          deleteClaim: false
-    resources:
-      requests:
-        memory: 1Gi
-        cpu: 500m
-      limits:
-        memory: 2Gi
-        cpu: 1000m
-  zookeeper:
-    replicas: 1
-    storage:
-      type: persistent-claim
-      size: 2Gi
-      deleteClaim: false
-    resources:
-      requests:
-        memory: 512Mi
-        cpu: 250m
-      limits:
-        memory: 1Gi
-        cpu: 500m
   entityOperator:
     topicOperator:
       resources:

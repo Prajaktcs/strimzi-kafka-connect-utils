@@ -1,9 +1,12 @@
 """Control module for managing Kafka Connect connectors."""
 
+import json
 import logging
+import uuid
 from typing import Any
 
 import requests
+from confluent_kafka import Producer
 
 logger = logging.getLogger(__name__)
 
@@ -11,18 +14,30 @@ logger = logging.getLogger(__name__)
 class ConnectorController:
     """Controller for Kafka Connect operations."""
 
-    def __init__(self, connect_url: str):
+    def __init__(self, connect_url: str, bootstrap_servers: str | None = None):
         """
         Initialize the connector controller.
 
         Args:
             connect_url: Kafka Connect REST API URL
+            bootstrap_servers: Optional Kafka bootstrap servers for signaling
         """
         self.connect_url = connect_url.rstrip("/")
+        self.bootstrap_servers = bootstrap_servers
         self.session = requests.Session()
         self.session.headers.update(
             {"Content-Type": "application/json", "Accept": "application/json"}
         )
+        self._producer: Producer | None = None
+
+    def _get_producer(self) -> Producer:
+        """Get or create Kafka producer for signaling."""
+        if not self.bootstrap_servers:
+            raise ValueError("Bootstrap servers not configured. Cannot send signals.")
+
+        if self._producer is None:
+            self._producer = Producer({"bootstrap.servers": self.bootstrap_servers})
+        return self._producer
 
     def _make_request(
         self, method: str, endpoint: str, data: dict[str, Any] | None = None
@@ -69,6 +84,17 @@ class ConnectorController:
         """
         response = self._make_request("GET", "connectors")
         result: list[str] = response.json()
+        return result
+
+    def get_all_connectors_status(self) -> dict[str, dict[str, Any]]:
+        """
+        Get status and info for all connectors.
+
+        Returns:
+            Dictionary mapping connector name to its status and info
+        """
+        response = self._make_request("GET", "connectors?expand=status&expand=info")
+        result: dict[str, dict[str, Any]] = response.json()
         return result
 
     def get_connector_info(self, connector_name: str) -> dict[str, Any]:
@@ -196,31 +222,76 @@ class ConnectorController:
         logger.info(f"Restarted task {task_id} for connector: {connector_name}")
 
     def trigger_snapshot(
-        self, connector_name: str, snapshot_type: str = "incremental"
+        self,
+        connector_name: str,
+        snapshot_type: str = "incremental",
+        tables: list[str] | None = None,
     ) -> dict[str, Any]:
         """
-        Trigger a snapshot for a Debezium connector.
+        Trigger a snapshot for a Debezium connector via signaling topic.
 
         Args:
             connector_name: Name of the connector
-            snapshot_type: Type of snapshot (incremental, blocking, etc.)
+            snapshot_type: Type of snapshot (incremental, blocking)
+            tables: Optional list of tables to include (fully qualified names)
 
         Returns:
-            Response from the API
+            Status of the snapshot trigger
         """
-        # Debezium snapshot triggering via signal topic or REST API
-        # This is a simplified example - actual implementation may vary
-        endpoint = f"connectors/{connector_name}/tasks/0/restart"
+        config = self.get_connector_config(connector_name)
 
-        # For Debezium 2.0+, you can use the signal mechanism
-        # This would typically involve sending a signal to a designated topic
-        logger.info(f"Triggering {snapshot_type} snapshot for connector: {connector_name}")
+        # 1. Identify signal topic
+        signal_topic = config.get("signal.kafka.topic", "debezium.signals")
 
-        # Note: Actual snapshot triggering may require sending signals to Kafka topics
-        # depending on Debezium version and configuration
-        _ = self._make_request("POST", endpoint)
+        # 2. Construct Debezium signal
+        signal_id = str(uuid.uuid4())
+        signal_payload = {
+            "id": signal_id,
+            "type": "execute-snapshot",
+            "data": {
+                "data-collections": tables or ["*"],
+                "type": snapshot_type,
+            },
+        }
 
-        return {"status": "snapshot_triggered", "connector": connector_name}
+        # 3. Send signal to Kafka
+        try:
+            producer = self._get_producer()
+            producer.produce(
+                signal_topic,
+                key=connector_name.encode("utf-8"),
+                value=json.dumps(signal_payload).encode("utf-8"),
+            )
+            producer.flush()
+
+            logger.info(
+                f"Triggered {snapshot_type} snapshot for {connector_name} (ID: {signal_id})"
+            )
+            return {
+                "status": "success",
+                "message": f"Signal sent to {signal_topic}",
+                "signal_id": signal_id,
+            }
+        except Exception as e:
+            logger.error(f"Failed to trigger snapshot: {e}")
+            # Fallback to legacy method if producer is not available or fails
+            logger.info("Falling back to legacy task restart method")
+            self.restart_connector_task(connector_name, 0)
+            return {
+                "status": "fallback",
+                "message": f"Kafka signal failed ({e}). Restarted Task 0 as fallback.",
+            }
+
+    def get_cluster_info(self) -> dict[str, Any]:
+        """
+        Get Kafka Connect cluster information.
+
+        Returns:
+            Cluster info dictionary (version, commit, kafka_cluster_id, etc.)
+        """
+        response = self._make_request("GET", "")
+        result: dict[str, Any] = response.json()
+        return result
 
     def get_connector_plugins(self) -> list[dict[str, Any]]:
         """
@@ -233,20 +304,40 @@ class ConnectorController:
         result: list[dict[str, Any]] = response.json()
         return result
 
-    def validate_connector_config(
-        self, plugin_class: str, config: dict[str, Any]
-    ) -> dict[str, Any]:
+    def to_strimzi_yaml(self, connector_name: str, cluster_name: str = "my-connect-cluster") -> str:
         """
-        Validate connector configuration.
+        Generate Strimzi KafkaConnector YAML for a connector.
 
         Args:
-            plugin_class: Connector plugin class name
-            config: Configuration to validate
+            connector_name: Name of the connector
+            cluster_name: Name of the Strimzi KafkaConnect cluster
 
         Returns:
-            Validation result
+            YAML string
         """
-        endpoint = f"connector-plugins/{plugin_class}/config/validate"
-        response = self._make_request("PUT", endpoint, data=config)
-        result: dict[str, Any] = response.json()
-        return result
+        config = dict(self.get_connector_config(connector_name))
+        connector_class = config.pop("connector.class", "unknown")
+        tasks_max = int(config.pop("tasks.max", "1"))
+
+        yaml_lines = [
+            "apiVersion: kafka.strimzi.io/v1beta2",
+            "kind: KafkaConnector",
+            "metadata:",
+            f"  name: {connector_name}",
+            "  labels:",
+            f"    strimzi.io/cluster: {cluster_name}",
+            "spec:",
+            f"  class: {connector_class}",
+            f"  tasksMax: {tasks_max}",
+            "  config:",
+        ]
+
+        # Add all other config fields
+        for key, value in sorted(config.items()):
+            # Handle string vs other types (simple conversion)
+            if isinstance(value, str):
+                yaml_lines.append(f'    {key}: "{value}"')
+            else:
+                yaml_lines.append(f"    {key}: {value}")
+
+        return "\n".join(yaml_lines)

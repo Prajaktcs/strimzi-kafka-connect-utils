@@ -7,7 +7,10 @@ data:
   garage.toml: |
     metadata_dir = "/var/lib/garage/meta"
     data_dir = "/var/lib/garage/data"
-    replication_mode = "none"
+    replication_factor = 1
+    consistency_mode = "consistent"
+    rpc_bind_addr = "[::]:3901"
+    rpc_secret = "5c52402170364952097441656c3821034c442340356536565c40445d4444535d"
 
     [s3_api]
     s3_region = "us-east-1"
@@ -18,9 +21,6 @@ data:
     bind_addr = "[::]:3902"
     root_domain = ".web.local"
     enabled = true
-
-    [rpc]
-    bind_addr = "[::]:3901"
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -50,7 +50,8 @@ spec:
               name: web
           volumeMounts:
             - name: config
-              mountPath: /etc/garage
+              mountPath: /etc/garage.toml
+              subPath: garage.toml
             - name: data
               mountPath: /var/lib/garage
           env:

@@ -38,6 +38,11 @@ class Config:
         return str(self._config["kafka"]["connect_url"])
 
     @property
+    def connect_cluster_name(self) -> str:
+        """Get the Strimzi KafkaConnect cluster name."""
+        return str(self._config["kafka"].get("connect_cluster_name", "my-connect-cluster"))
+
+    @property
     def storage_endpoint(self) -> str:
         """Get S3 storage endpoint URL."""
         return str(self._config["storage"]["endpoint_url"])

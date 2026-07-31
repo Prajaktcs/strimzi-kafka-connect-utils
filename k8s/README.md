@@ -4,11 +4,12 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 
 ## What Gets Deployed
 
-1. **Strimzi Operator** - v0.50.0 - Kubernetes operator for managing Kafka
-2. **Kafka Cluster** - v4.1.1 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
-3. **Kafka Connect** - v4.1.1 - With Debezium 3.4.0 (PostgreSQL connector)
-4. **PostgreSQL** - v18.2-alpine - Database configured for CDC (Change Data Capture)
-5. **Garage S3** - v2.1.0 - S3-compatible object storage for Iceberg
+1. **Strimzi Operator** - v1.1.0 - Kubernetes operator for managing Kafka
+2. **Kafka Cluster** - v4.3.0 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
+3. **Kafka Connect** - v4.3.0 - With Debezium 3.6.0 (PostgreSQL connector)
+4. **PostgreSQL** - v18.4-alpine - Database configured for CDC (Change Data Capture)
+5. **Garage S3** - v2.3.0 - S3-compatible object storage for Iceberg
+6. **Nessie** - v0.108.4 - Iceberg REST catalog
 
 ## Prerequisites
 
@@ -141,17 +142,19 @@ bucket = "warehouse"
 Creates dedicated `kafka` namespace for all resources.
 
 ### 01-postgres.yaml
-Deploys PostgreSQL 18.2 Alpine with logical replication enabled.
+Deploys PostgreSQL 18.4 Alpine with logical replication enabled.
 
 ### 02-kafka.yaml
-Deploys single-node Kafka 4.1.1 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
+Deploys single-node Kafka 4.3.0 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
 
 ### 03-kafka-connect.yaml
-Deploys Kafka Connect with Debezium PostgreSQL connector. Uses a custom local image `my-connect-cluster:0.0.1`.
+Deploys Kafka Connect with Debezium PostgreSQL connector. Uses a custom local image `my-connect-cluster:0.0.2`.
 
 ### 04-garage.yaml
-Deploys Garage S3 v2.1.0 for object storage.
+Deploys Garage S3 v2.3.0 for object storage.
 
+### 05-iceberg-catalog.yaml
+Deploys Nessie 0.108.4 catalog.
 ## Troubleshooting
 
 ### Kafka Connect build takes too long
@@ -184,7 +187,7 @@ If pod is ready but connection fails, the service might not be fully initialized
 
 Check operator logs:
 ```bash
-kubectl logs -f deployment/strimzi-cluster-operator -n strimzi-system
+kubectl logs -f deployment/strimzi-cluster-operator -n kafka
 ```
 
 ## Customization
@@ -230,10 +233,8 @@ This removes:
 
 ### Remove Strimzi Operator
 
-```bash
-kubectl delete namespace strimzi-system
-```
-
+The operator is installed into the `kafka` namespace and is removed with `just destroy` / `./destroy.sh`.
+To remove only the operator resources while keeping the namespace, delete the Strimzi Deployment/CRDs manually.
 ## Production Considerations
 
 **This setup is for local development only.** For production:

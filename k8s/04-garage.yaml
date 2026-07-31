@@ -40,7 +40,7 @@ spec:
     spec:
       containers:
         - name: garage
-          image: dxflrs/garage:v2.1.0
+          image: dxflrs/garage:v2.3.0
           ports:
             - containerPort: 3900
               name: s3

@@ -57,9 +57,5 @@ kubectl apply -f 00-namespace.yaml # Ensure file exists for delete if needed, bu
 kubectl delete namespace ${NAMESPACE} --wait=true || true
 
 echo ""
-echo "All resources deleted"
-echo ""
-echo "Note: Strimzi operator is still installed in strimzi-system namespace."
-echo "To remove it:"
-echo "  kubectl delete namespace strimzi-system"
+echo "All resources deleted (including Strimzi operator in ${NAMESPACE})."
 echo ""

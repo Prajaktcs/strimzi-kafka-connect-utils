@@ -23,8 +23,8 @@ spec:
                 exit 1
               fi
 
-              echo "Downloading Garage v2.1.0 for $ARCH_STR..."
-              curl -L -o /usr/local/bin/garage "https://garagehq.deuxfleurs.fr/_releases/v2.1.0/$ARCH_STR/garage"
+              echo "Downloading Garage v2.3.0 for $ARCH_STR..."
+              curl -L -o /usr/local/bin/garage "https://garagehq.deuxfleurs.fr/_releases/v2.3.0/$ARCH_STR/garage"
               chmod +x /usr/local/bin/garage
 
               echo "Waiting for Garage to be ready..."

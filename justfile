@@ -7,7 +7,7 @@
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 namespace := "kafka"
-connect_image := "my-connect-cluster:0.0.1"
+connect_image := "my-connect-cluster:0.0.2"
 helper := "scripts/local-dev.sh"
 
 default:
@@ -42,7 +42,7 @@ ensure-cluster:
 # Build local Kafka Connect image (Debezium Postgres plugin)
 build-connect:
     @echo "Building Connect image {{ connect_image }}..."
-    docker build -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
+    docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     @echo "Image {{ connect_image }} ready."
 
 # Deploy local Kubernetes environment

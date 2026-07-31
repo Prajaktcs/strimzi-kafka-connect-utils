@@ -21,9 +21,9 @@ Whether you're building a data lakehouse with Debezium and Iceberg, streaming ch
 This is the recommended setup for actual use:
 
 - **Kubernetes Cluster**: Your existing cluster running Strimzi
-- **Strimzi Operator**: 0.50.0
-- **Kafka**: 3.10.0 (Managed by Strimzi operator)
-- **Kafka Connect**: Deployed via Strimzi KafkaConnect CRD with Debezium 3.1.2
+- **Strimzi Operator**: 1.1.0
+- **Kafka**: 4.3.0 (Managed by Strimzi operator, KRaft)
+- **Kafka Connect**: Deployed via Strimzi KafkaConnect CRD with Debezium 3.6.0
 - **Strimzi Ops**: Python 3.14+ application that connects remotely via:
   - Kafka Connect REST API (port 8083)
   - Kafka Bootstrap Servers (port 9092)
@@ -62,10 +62,11 @@ This is the recommended setup for actual use:
 
 For testing locally, use the provided Kubernetes manifests:
 
-- **Strimzi Operator**: 0.50.0
-- **Kafka**: 3.10.0 (single-node cluster)
-- **Database**: PostgreSQL 16 with CDC enabled
-- **Kafka Connect**: With Debezium 3.1.2 (PostgreSQL & MySQL connectors)
+- **Strimzi Operator**: 1.1.0
+- **Kafka**: 4.3.0 (single-node KRaft cluster)
+- **Database**: PostgreSQL 18.4 with CDC enabled
+- **Kafka Connect**: With Debezium 3.6.0 (PostgreSQL connector)
+- **Object Storage / Catalog**: Garage 2.3.0 + Nessie 0.108.4
 - **App Logic**: Python 3.14+ (Streamlit + Confluent Kafka + Pydantic)
 
 See the "Local Development Environment" section below for details.
@@ -395,7 +396,7 @@ just deploy
 
 1. Start Colima with Kubernetes if no cluster is reachable
 2. Install Python deps with uv
-3. Build the local Connect image (`my-connect-cluster:0.0.1`)
+3. Build the local Connect image (`my-connect-cluster:0.0.2`)
 4. Deploy Strimzi, PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
 5. Write `secrets.toml` with Garage credentials from the setup job
 6. Apply the sample Postgres source connector

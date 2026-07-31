@@ -2,7 +2,7 @@
 set -e
 
 NAMESPACE="kafka"
-STRIMZI_VERSION="0.50.0"
+STRIMZI_VERSION="1.1.0"
 
 echo "Deploying Strimzi Ops local development environment"
 echo "======================================================="
@@ -24,25 +24,28 @@ fi
 echo "Connected to Kubernetes cluster"
 echo ""
 
-# Check if Strimzi operator is installed
-if ! kubectl get crd kafkas.kafka.strimzi.io &> /dev/null; then
-    echo "Strimzi operator not found. Installing Strimzi ${STRIMZI_VERSION}..."
-    kubectl create namespace strimzi-system || true
-    kubectl create -f "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" -n strimzi-system
+# Create app namespace first (operator will be installed here for local single-ns watch)
+kubectl apply -f 00-namespace.yaml
 
-    echo "Waiting for Strimzi operator to be ready..."
-    kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n strimzi-system --timeout=300s
-    echo "Strimzi operator installed"
-else
-    echo "Strimzi operator already installed"
-fi
+# Install or upgrade Strimzi operator to the pinned version (watches the kafka namespace)
+echo "Installing/upgrading Strimzi operator ${STRIMZI_VERSION} into ${NAMESPACE}..."
+OPERATOR_YAML="$(mktemp)"
+curl -fsSL \
+  "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" \
+  -o "${OPERATOR_YAML}"
+# Official bundle defaults to namespace "myproject"; point it at our local namespace.
+sed "s/namespace: myproject/namespace: ${NAMESPACE}/g" "${OPERATOR_YAML}" | kubectl apply -f -
+rm -f "${OPERATOR_YAML}"
+
+echo "Waiting for Strimzi operator to be ready..."
+kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n ${NAMESPACE} --timeout=300s
+echo "Strimzi operator ${STRIMZI_VERSION} is ready"
 echo ""
 
 # Apply manifests
 echo "Applying Kubernetes manifests..."
 
-# Create namespace
-kubectl apply -f 00-namespace.yaml
+# Namespace already applied above
 
 # Deploy PostgreSQL
 echo "  - PostgreSQL database"

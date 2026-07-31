@@ -14,6 +14,7 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 
 - Kubernetes cluster (Colima, Minikube, kind, or Docker Desktop)
 - kubectl installed and configured
+- [just](https://github.com/casey/just) (`brew install just`)
 - Minimum 4GB RAM allocated to your cluster
 
 ## Quick Start
@@ -21,20 +22,24 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 ```bash
 # From the project root:
 
-# Deploy everything
-make deploy
+# Full local setup (deps + Connect image + deploy + secrets.toml)
+just setup
+
+# Or deploy only
+just deploy
 
 # Check status
-make status
+just status
 
 # Port forward services (each in a separate terminal)
-make port-forward        # Terminal 1: Kafka Connect API
-make port-forward-kafka  # Terminal 2: Kafka Bootstrap
-make port-forward-postgres # Terminal 3: PostgreSQL
-make port-forward-garage # Terminal 4: Garage S3
+just port-forward          # Terminal 1: Kafka Connect API
+just port-forward-kafka    # Terminal 2: Kafka Bootstrap
+just port-forward-postgres # Terminal 3: PostgreSQL
+just port-forward-garage   # Terminal 4: Garage S3
+just port-forward-nessie   # Terminal 5: Nessie catalog
 
 # Clean up when done
-make destroy
+just destroy
 ```
 
 You can also run the scripts directly from this directory:
@@ -81,7 +86,7 @@ kubectl cluster-info
 
 ```bash
 # From project root
-make deploy
+just deploy
 
 # Or from k8s/ directory
 ./deploy.sh
@@ -100,7 +105,7 @@ The script will:
 
 ```bash
 # From project root
-make status
+just status
 
 # Or from k8s/ directory
 ./status.sh
@@ -120,10 +125,11 @@ Pods:
 Port forward to access from localhost:
 
 ```bash
-make port-forward
-make port-forward-kafka
-make port-forward-postgres
-make port-forward-garage
+just port-forward
+just port-forward-kafka
+just port-forward-postgres
+just port-forward-garage
+just port-forward-nessie
 ```
 
 Then configure `secrets.toml`:

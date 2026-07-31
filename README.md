@@ -105,6 +105,7 @@ brew install uv
 
 - Python 3.12 or higher
 - [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+- [just](https://github.com/casey/just) - Command runner (`brew install just`)
 - Kubernetes cluster with kubectl configured (Colima, Minikube, kind, or existing cluster)
 - Access to a Kubernetes cluster with Strimzi Kafka Connect deployed (or use local dev setup)
 
@@ -120,18 +121,18 @@ cd strimzi-ops
 # 2. Start Kubernetes (Colima example)
 colima start --kubernetes --cpu 4 --memory 4
 
-# 3. Run complete setup (installs deps + deploys K8s)
-make setup
+# 3. Run complete setup (deps + Connect image + K8s + secrets.toml)
+just setup
 
-# 4. In a new terminal, port forward services
-make port-forward
+# 4. In new terminals, port-forward services
+just port-forward
+just port-forward-kafka
+just port-forward-garage
 
-# 5. Configure connection
-cp secrets.toml.example secrets.toml
-# Edit if needed (defaults work for local dev)
+# 5. Paste Garage keys from deploy output into secrets.toml if needed
 
 # 6. Start the UI (in another terminal)
-make run
+just run
 ```
 
 ### Option B: Connect to Existing Cluster
@@ -142,7 +143,7 @@ If you already have Kafka Connect running on Kubernetes:
 # 1. Clone and install
 git clone <repository-url>
 cd strimzi-ops
-make install
+just install
 
 # 2. Port forward to your cluster
 kubectl port-forward svc/your-connect-api 8083:8083 -n your-namespace
@@ -153,29 +154,31 @@ cp secrets.toml.example secrets.toml
 # Edit with your cluster details
 
 # 4. Start using the tools
-make run  # Start UI
-make lint-config FILE=examples/debezium-postgres-connector.yaml  # Lint configs
+just run  # Start UI
+just lint-config examples/debezium-postgres-connector.yaml  # Lint configs
 ```
 
-### Available Make Commands
+### Available Just Recipes
 
-Run `make help` to see all available commands:
+Run `just --list` to see all available commands:
 
 ```
 Setup & Deployment:
-  make setup         - Complete setup (install deps + deploy K8s)
-  make deploy        - Deploy local Kubernetes environment
-  make status        - Check deployment status
-  make destroy       - Destroy local environment
+  just setup         - Deps + Connect image + K8s deploy + secrets.toml
+  just deploy        - Deploy local Kubernetes environment
+  just status        - Check deployment status
+  just destroy       - Destroy local environment
 
 Port Forwarding:
-  make port-forward           - Forward Kafka Connect API (8083)
-  make port-forward-kafka     - Forward Kafka bootstrap (9092)
-  make port-forward-postgres  - Forward PostgreSQL (5432)
+  just port-forward           - Forward Kafka Connect API (8083)
+  just port-forward-kafka     - Forward Kafka bootstrap (9092)
+  just port-forward-postgres  - Forward PostgreSQL (5432)
+  just port-forward-garage    - Forward Garage S3 (3900)
+  just port-forward-nessie    - Forward Nessie catalog (19120)
 
 Application:
-  make run           - Start Streamlit UI
-  make lint-config   - Lint connector config (FILE=path)
+  just run                    - Start Streamlit UI
+  just lint-config <file>     - Lint connector config
 ```
 
 ## Usage
@@ -185,8 +188,8 @@ Application:
 Validate your connector configurations before deploying them using the command-line linter:
 
 ```bash
-# Using make (recommended)
-make lint-config FILE=examples/debezium-postgres-connector.yaml
+# Using just (recommended)
+just lint-config examples/debezium-postgres-connector.yaml
 
 # Direct CLI usage
 uv run strimzi-lint lint examples/debezium-postgres-connector.yaml
@@ -223,14 +226,14 @@ See `examples/` directory for more examples.
 
 View an overview of all connectors, their status, and health metrics.
 
-1. Start the application: `make run`
+1. Start the application: `just run`
 2. Navigate to the **Dashboard** page
 
 ### Monitor (UI)
 
 Track snapshot progress in real-time:
 
-1. Start the application: `make run`
+1. Start the application: `just run`
 2. Navigate to the **Monitor** page
 3. Configure the notification topic (default: `debezium.notifications`)
 4. Set monitoring duration
@@ -242,7 +245,7 @@ The monitor will display real-time snapshot progress for all active connectors.
 
 Manage your connectors:
 
-1. Start the application: `make run`
+1. Start the application: `just run`
 2. Navigate to the **Control** page
 3. Select a connector from the dropdown
 4. Available actions:
@@ -303,7 +306,7 @@ strimzi-ops/
 ├── pyproject.toml                  # Project config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)
 ├── secrets.toml.example            # Configuration template
-├── Makefile                        # Development commands
+├── justfile                        # Development commands (just)
 ├── .gitignore                      # Git ignore rules
 ├── k8s/                            # Kubernetes manifests for local dev
 │   ├── 00-namespace.yaml          # Kafka namespace
@@ -400,28 +403,28 @@ kubectl cluster-info
 ### Deploy Local Environment
 
 ```bash
-# Option 1: Complete setup (installs deps + deploys K8s)
-make setup
+# Option 1: Complete setup (deps + Connect image + K8s + secrets.toml)
+just setup
 
-# Option 2: Just deploy K8s (if deps already installed)
-make deploy
+# Option 2: Just deploy K8s (if deps/image already ready)
+just deploy
 ```
 
-This will:
+`just setup` will:
 
-1. Install Strimzi operator (if not already installed)
-2. Create namespace `kafka`
-3. Deploy PostgreSQL with CDC enabled
-4. Deploy Kafka cluster (single-node)
-5. Deploy Kafka Connect with Debezium connectors
-6. Wait for everything to be ready
+1. Install Python deps with uv
+2. Build the local Connect image (`my-connect-cluster:0.0.1`)
+3. Install Strimzi operator (if not already installed)
+4. Deploy PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
+5. Create `secrets.toml` from the example if missing
+6. Print Garage credentials from the setup job
 
-The deployment takes 5-10 minutes on first run (Kafka Connect needs to build custom image).
+The deployment takes 5-10 minutes on first run.
 
 ### Check Status
 
 ```bash
-make status
+just status
 ```
 
 ### Port Forward Services
@@ -430,13 +433,19 @@ After deployment, open separate terminals and run:
 
 ```bash
 # Terminal 1: Kafka Connect REST API
-make port-forward
+just port-forward
 
 # Terminal 2: Kafka Bootstrap Servers (if needed for monitoring)
-make port-forward-kafka
+just port-forward-kafka
 
 # Terminal 3: PostgreSQL (optional)
-make port-forward-postgres
+just port-forward-postgres
+
+# Terminal 4: Garage S3 (optional)
+just port-forward-garage
+
+# Terminal 5: Nessie catalog (optional)
+just port-forward-nessie
 ```
 
 ### Configure Strimzi Ops
@@ -459,10 +468,10 @@ connect_url = "http://localhost:8083"
 
 ```bash
 # Start the UI
-make run
+just run
 
 # Lint a connector configuration
-make lint-config FILE=examples/debezium-postgres-connector.yaml
+just lint-config examples/debezium-postgres-connector.yaml
 ```
 
 ### Destroy Local Environment
@@ -470,7 +479,7 @@ make lint-config FILE=examples/debezium-postgres-connector.yaml
 When you're done:
 
 ```bash
-make destroy
+just destroy
 ```
 
 This removes all resources but keeps the Strimzi operator installed for faster future deployments.
@@ -486,7 +495,7 @@ All development commands use `uv` for dependency management and execution.
 uv sync
 
 # Or using Make
-make install
+just install
 ```
 
 ### Running Tests
@@ -496,7 +505,7 @@ make install
 uv run pytest tests/ -v
 
 # Or using Make
-make test
+just test
 ```
 
 ### Code Formatting
@@ -506,7 +515,7 @@ make test
 uv run black strimzi_ops/ app.py
 
 # Or using Make
-make format
+just format
 ```
 
 ### Code Linting
@@ -516,14 +525,14 @@ make format
 uv run ruff check strimzi_ops/ app.py
 
 # Or using Make
-make lint
+just lint
 ```
 
 ### Run All Checks
 
 ```bash
 # Run format and lint checks
-make check
+just check
 ```
 
 ### Type Checking

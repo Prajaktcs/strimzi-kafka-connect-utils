@@ -51,7 +51,8 @@ spec:
               garage bucket allow -h garage:3901 warehouse --read --write --key lakehouse-key
 
               echo "Setup complete. Key info:"
-              garage key info -h garage:3901 lakehouse-key
+              garage key info -h garage:3901 --show-secret lakehouse-key 2>/dev/null \
+                || garage key info -h garage:3901 lakehouse-key
           env:
             - name: RUST_LOG
               value: info

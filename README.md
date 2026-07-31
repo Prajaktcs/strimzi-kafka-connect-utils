@@ -118,22 +118,13 @@ If you want to run everything locally on Kubernetes:
 git clone <repository-url>
 cd strimzi-ops
 
-# 2. Start Kubernetes (Colima example)
-colima start --kubernetes --cpu 4 --memory 4
-
-# 3. Run complete setup (deps + Connect image + K8s + secrets.toml)
+# 2. One command: Colima (if needed), deps, Connect image, K8s stack,
+#    secrets.toml, sample connector, port-forwards, and Streamlit UI
 just setup
-
-# 4. In new terminals, port-forward services
-just port-forward
-just port-forward-kafka
-just port-forward-garage
-
-# 5. Paste Garage keys from deploy output into secrets.toml if needed
-
-# 6. Start the UI (in another terminal)
-just run
 ```
+
+Requires [just](https://github.com/casey/just), Docker, kubectl, and preferably Colima (`brew install just colima docker kubectl`).
+First run can take 5–10 minutes. Tear down with `just destroy`.
 
 ### Option B: Connect to Existing Cluster
 
@@ -160,25 +151,15 @@ just lint-config examples/debezium-postgres-connector.yaml  # Lint configs
 
 ### Available Just Recipes
 
-Run `just --list` to see all available commands:
+Run `just --list` to see all recipes. The important ones:
 
 ```
-Setup & Deployment:
-  just setup         - Deps + Connect image + K8s deploy + secrets.toml
-  just deploy        - Deploy local Kubernetes environment
-  just status        - Check deployment status
-  just destroy       - Destroy local environment
-
-Port Forwarding:
-  just port-forward           - Forward Kafka Connect API (8083)
-  just port-forward-kafka     - Forward Kafka bootstrap (9092)
-  just port-forward-postgres  - Forward PostgreSQL (5432)
-  just port-forward-garage    - Forward Garage S3 (3900)
-  just port-forward-nessie    - Forward Nessie catalog (19120)
-
-Application:
-  just run                    - Start Streamlit UI
-  just lint-config <file>     - Lint connector config
+  just setup              - Full local bring-up (infra + UI)
+  just destroy            - Tear down k8s resources + stop port-forwards
+  just status             - Check deployment status
+  just stop-forwards      - Stop background port-forwards only
+  just run                - Restart Streamlit UI (stack already up)
+  just lint-config <file> - Lint a connector config
 ```
 
 ## Usage
@@ -403,23 +384,25 @@ kubectl cluster-info
 ### Deploy Local Environment
 
 ```bash
-# Option 1: Complete setup (deps + Connect image + K8s + secrets.toml)
+# One command (preferred)
 just setup
 
-# Option 2: Just deploy K8s (if deps/image already ready)
+# Or deploy only (if image/deps already ready)
 just deploy
 ```
 
 `just setup` will:
 
-1. Install Python deps with uv
-2. Build the local Connect image (`my-connect-cluster:0.0.1`)
-3. Install Strimzi operator (if not already installed)
-4. Deploy PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
-5. Create `secrets.toml` from the example if missing
-6. Print Garage credentials from the setup job
+1. Start Colima with Kubernetes if no cluster is reachable
+2. Install Python deps with uv
+3. Build the local Connect image (`my-connect-cluster:0.0.1`)
+4. Deploy Strimzi, PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
+5. Write `secrets.toml` with Garage credentials from the setup job
+6. Apply the sample Postgres source connector
+7. Start port-forwards in the background
+8. Launch the Streamlit UI
 
-The deployment takes 5-10 minutes on first run.
+The first run takes 5–10 minutes.
 
 ### Check Status
 

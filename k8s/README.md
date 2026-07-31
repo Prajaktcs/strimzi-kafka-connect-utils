@@ -20,28 +20,17 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 ## Quick Start
 
 ```bash
-# From the project root:
-
-# Full local setup (deps + Connect image + deploy + secrets.toml)
+# From the project root — one command bring-up:
 just setup
 
-# Or deploy only
-just deploy
-
-# Check status
+# Check status / tear down
 just status
-
-# Port forward services (each in a separate terminal)
-just port-forward          # Terminal 1: Kafka Connect API
-just port-forward-kafka    # Terminal 2: Kafka Bootstrap
-just port-forward-postgres # Terminal 3: PostgreSQL
-just port-forward-garage   # Terminal 4: Garage S3
-just port-forward-nessie   # Terminal 5: Nessie catalog
-
-# Clean up when done
 just destroy
 ```
 
+`just setup` starts Colima if needed, builds the Connect image, deploys the stack,
+writes `secrets.toml`, applies `test-connector.yaml`, starts background port-forwards,
+and launches the UI.
 You can also run the scripts directly from this directory:
 
 ```bash

@@ -74,28 +74,24 @@ ensure_cluster() {
   exit 1
 }
 
-garage_logs() {
-  local pod
-  pod="$(kubectl get pods -n "${NAMESPACE}" -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
-  if [[ -z "${pod}" ]]; then
-    echo "Garage setup pod not found in namespace ${NAMESPACE}" >&2
-    return 1
-  fi
-  kubectl logs "${pod}" -n "${NAMESPACE}"
-}
-
 sync_secrets() {
-  # Garage 2.3 local stack uses fixed default credentials from 04-garage.yaml.
-  local access_key="GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  local secret_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-  write_secrets "${access_key}" "${secret_key}"
+  # Args from justfile pins (access secret bucket endpoint); fall back to local defaults.
+  local access_key="${1:-GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+  local secret_key="${2:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  local bucket="${3:-warehouse}"
+  local endpoint="${4:-http://localhost:3900}"
+  write_secrets "${access_key}" "${secret_key}" "${bucket}" "${endpoint}"
   echo "Wrote local-dev Garage credentials to secrets.toml"
   echo "  access_key=${access_key}"
+  echo "  endpoint=${endpoint}"
+  echo "  bucket=${bucket}"
 }
 
 write_secrets() {
   local access_key="$1"
   local secret_key="$2"
+  local bucket="${3:-warehouse}"
+  local endpoint="${4:-http://localhost:3900}"
   cat >"${ROOT}/secrets.toml" <<EOF
 [kafka]
 bootstrap_servers = "localhost:9092"
@@ -103,10 +99,10 @@ connect_url = "http://localhost:8083"
 
 [storage]
 type = "s3"
-endpoint_url = "http://localhost:3900"
+endpoint_url = "${endpoint}"
 access_key = "${access_key}"
 secret_key = "${secret_key}"
-bucket = "warehouse"
+bucket = "${bucket}"
 EOF
 }
 
@@ -202,10 +198,11 @@ EOF
 
 main() {
   local cmd="${1:-}"
+  shift || true
   case "${cmd}" in
     ensure-cluster) ensure_cluster ;;
     ensure-buildx) ensure_buildx ;;
-    sync-secrets) sync_secrets ;;
+    sync-secrets) sync_secrets "$@" ;;
     apply-connector) apply_connector ;;
     port-forward-all) port_forward_all ;;
     stop-forwards) stop_port_forwards ;;

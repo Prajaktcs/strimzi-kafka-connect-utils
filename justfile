@@ -1,30 +1,61 @@
 # Strimzi Ops Platform — https://github.com/casey/just
-# Run `just` to list recipes.
 #
-# One-command local stack:
+# One command:
 #   just setup
+#
+# That will:
+#   1. uv sync
+#   2. start Colima+k8s if needed
+#   3. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
+#   4. build Connect image with Debezium
+#   5. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + Garage 2.3 + Nessie
+#      (wipes legacy v1beta2 Strimzi CRDs if present; installs operator into kafka ns)
+#   6. write secrets.toml with local-dev Garage keys
+#   7. apply sample Postgres source connector
+#   8. start background port-forwards
+#   9. launch Streamlit UI
+#
+# Tear down:
+#   just destroy        # app namespace (+ stop port-forwards)
+#   just destroy-hard   # also delete Strimzi CRDs (clean major upgrades)
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
+# --- Local stack pins (keep in sync with k8s/ manifests) ---
 namespace := "kafka"
+strimzi_version := "1.1.0"
+kafka_version := "4.3.0"
+debezium_version := "3.6.0.Final"
 connect_image := "my-connect-cluster:0.0.2"
 helper := "scripts/local-dev.sh"
+
+# Garage 2.3 --single-node --default-bucket credentials (local-dev only).
+# Must match env in k8s/04-garage.yaml.
+garage_access_key := "GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+garage_secret_key := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+garage_bucket := "warehouse"
+garage_endpoint := "http://localhost:3900"
 
 default:
     @just --list
 
-# One-command local setup: cluster, deps, image, deploy, secrets, connector, port-forwards, UI
+# One-command local setup → infra + secrets + connector + port-forwards + UI
 setup: install ensure-cluster build-connect deploy sync-secrets apply-connector port-forward-all
     @echo ""
     @echo "Local stack is ready."
     @echo "  Connect API : http://localhost:8083"
     @echo "  Kafka       : localhost:9092"
-    @echo "  Postgres    : localhost:5432"
-    @echo "  Garage S3   : http://localhost:3900"
+    @echo "  Postgres    : localhost:5432  (postgres / password / source_db)"
+    @echo "  Garage S3   : {{ garage_endpoint }}"
     @echo "  Nessie      : http://localhost:19120"
+    @echo "  UI          : http://localhost:8501"
     @echo ""
+    @echo "Stack: Strimzi {{ strimzi_version }} / Kafka {{ kafka_version }} / Debezium {{ debezium_version }}"
     @echo "Starting Streamlit UI..."
     uv run streamlit run app.py
+
+# Alias for setup
+up: setup
 
 # Install Python dependencies with uv
 install:
@@ -39,17 +70,17 @@ sync: install
 ensure-cluster:
     bash {{ helper }} ensure-cluster
 
-# Ensure docker buildx is available (fixes legacy builder deprecation)
+# Ensure docker buildx plugin works (fixes Docker Desktop→Colima broken symlink)
 ensure-buildx:
     bash {{ helper }} ensure-buildx
 
-# Build local Kafka Connect image (Debezium Postgres plugin)
+# Build local Kafka Connect image (Debezium Postgres plugin) via BuildKit
 build-connect: ensure-buildx
-    @echo "Building Connect image {{ connect_image }}..."
+    @echo "Building Connect image {{ connect_image }} (Debezium {{ debezium_version }})..."
     docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     @echo "Image {{ connect_image }} ready."
 
-# Deploy local Kubernetes environment
+# Deploy local Kubernetes environment (Strimzi/Kafka/Postgres/Garage/Nessie/Connect)
 deploy:
     cd k8s && ./deploy.sh
 
@@ -57,17 +88,32 @@ deploy:
 status:
     cd k8s && ./status.sh
 
+# Quick health: pods + Connect/UI HTTP checks
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Pods in {{ namespace }}:"
+    kubectl get pods -n {{ namespace }} || true
+    echo ""
+    echo -n "Connect :8083 → "; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8083/ || echo "down"
+    echo -n "UI      :8501 → "; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8501/ || echo "down"
+    echo -n "Garage  :3900 → "; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3900/ || echo "down"
+    echo -n "Nessie  :19120 → "; curl -s -o /dev/null -w "%{http_code}\n" http://localhost:19120/ || echo "down"
+
 # Destroy local environment (also stops port-forwards)
 destroy: stop-forwards
     cd k8s && ./destroy.sh
 
-# Destroy including Strimzi CRDs (use after major Strimzi upgrades)
+# Alias for destroy
+down: destroy
+
+# Destroy including Strimzi CRDs (needed after failed 0.x→1.x upgrades)
 destroy-hard: stop-forwards
     cd k8s && DESTROY_CRDS=1 ./destroy.sh
 
-# Write secrets.toml from Garage setup job credentials
+# Write secrets.toml with local-dev Garage credentials from this justfile
 sync-secrets:
-    bash {{ helper }} sync-secrets
+    bash {{ helper }} sync-secrets "{{ garage_access_key }}" "{{ garage_secret_key }}" "{{ garage_bucket }}" "{{ garage_endpoint }}"
 
 # Deploy the sample Debezium Postgres KafkaConnector
 apply-connector:
@@ -98,7 +144,7 @@ port-forward-postgres:
 
 # Forward Garage S3 API (3900) — foreground
 port-forward-garage:
-    @echo "Garage S3 → http://localhost:3900 (Ctrl+C to stop)"
+    @echo "Garage S3 → {{ garage_endpoint }} (Ctrl+C to stop)"
     kubectl port-forward svc/garage 3900:3900 -n {{ namespace }}
 
 # Forward Nessie catalog API (19120) — foreground

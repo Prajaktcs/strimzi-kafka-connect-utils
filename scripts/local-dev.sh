@@ -7,6 +7,40 @@ NAMESPACE="${NAMESPACE:-kafka}"
 LOCAL_DIR="${ROOT}/.local"
 PID_DIR="${LOCAL_DIR}/port-forwards"
 
+ensure_buildx() {
+  if docker buildx version >/dev/null 2>&1; then
+    echo "docker buildx $(docker buildx version | awk '{print $2}')"
+    return 0
+  fi
+
+  echo "docker buildx plugin missing or broken."
+
+  if ! command -v brew >/dev/null 2>&1; then
+    echo "Install buildx: https://docs.docker.com/go/buildx/"
+    echo "Or on macOS with Homebrew: brew install docker-buildx"
+    exit 1
+  fi
+
+  echo "Installing docker-buildx via Homebrew..."
+  brew install docker-buildx
+
+  local plugin_src plugin_dir
+  plugin_src="$(brew --prefix)/opt/docker-buildx/bin/docker-buildx"
+  plugin_dir="${HOME}/.docker/cli-plugins"
+  mkdir -p "${plugin_dir}"
+  # Replace broken Docker Desktop symlinks with the Homebrew plugin.
+  ln -sfn "${plugin_src}" "${plugin_dir}/docker-buildx"
+
+  if ! docker buildx version >/dev/null 2>&1; then
+    echo "buildx still unavailable after install. Try:"
+    echo "  mkdir -p ~/.docker/cli-plugins"
+    echo "  ln -sfn \"$(brew --prefix)/opt/docker-buildx/bin/docker-buildx\" ~/.docker/cli-plugins/docker-buildx"
+    exit 1
+  fi
+
+  echo "docker buildx ready: $(docker buildx version)"
+}
+
 ensure_cluster() {
   if ! command -v kubectl >/dev/null 2>&1; then
     echo "kubectl not found. Install kubectl first."
@@ -176,6 +210,7 @@ Usage: $0 <command>
 
 Commands:
   ensure-cluster
+  ensure-buildx
   sync-secrets
   apply-connector
   port-forward-all
@@ -187,6 +222,7 @@ main() {
   local cmd="${1:-}"
   case "${cmd}" in
     ensure-cluster) ensure_cluster ;;
+    ensure-buildx) ensure_buildx ;;
     sync-secrets) sync_secrets ;;
     apply-connector) apply_connector ;;
     port-forward-all) port_forward_all ;;

@@ -41,9 +41,16 @@ ensure-cluster:
 
 # Build local Kafka Connect image (Debezium Postgres plugin)
 build-connect:
-    @echo "Building Connect image {{ connect_image }}..."
-    docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
-    @echo "Image {{ connect_image }} ready."
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Building Connect image {{ connect_image }}..."
+    if docker buildx version >/dev/null 2>&1; then
+      docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
+    else
+      # Colima / Docker without the buildx plugin
+      DOCKER_BUILDKIT=1 docker build -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
+    fi
+    echo "Image {{ connect_image }} ready."
 
 # Deploy local Kubernetes environment
 deploy:

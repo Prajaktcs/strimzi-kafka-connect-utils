@@ -1,0 +1,42 @@
+---
+description: Canonical Rust best practices for this repo
+globs: "**/*.{rs,toml}"
+alwaysApply: false
+---
+
+# Rust coding standards
+
+Full guide: [docs/rust-best-practices.md](docs/rust-best-practices.md)
+Upstream: https://canonical.github.io/rust-best-practices/introduction.html
+
+## Must follow
+
+- `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`
+- `mod.rs` only declares modules / re-exports (no logic)
+- Library: `Error` + `Result` in `lib.rs` right after `mod`/`use`
+- Binary: `error.rs` + `result.rs` at crate root
+- Concrete `thiserror` in libraries — **no** `anyhow` / `Box<dyn Error>` in `strimzi-ops-core`
+- Convert foreign errors at the boundary; messages like `cannot …` (lowercase unless acronyms)
+- No `.unwrap()` / `.expect()` outside tests or true programmer errors (e.g. static regex)
+- Prefer `Self` in inherent impls; tight mutability scopes
+- For `Result<()>` paths: `?` then explicit `Ok(())`
+
+## Examples
+
+```rust
+// ❌ BAD — panic on user/IO path
+let text = fs::read_to_string(path).unwrap();
+
+// ✅ GOOD
+let text = fs::read_to_string(path).map_err(|source| Error::Read {
+    path: path.to_path_buf(),
+    source,
+})?;
+```
+
+```rust
+// ❌ BAD — logic in mod.rs
+// ✅ GOOD — mod.rs only:
+pub mod config;
+pub use config::LinterConfig;
+```

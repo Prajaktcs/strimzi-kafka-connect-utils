@@ -158,24 +158,41 @@ run:
     @echo "Starting Strimzi Ops Platform..."
     uv run streamlit run app.py
 
-# Lint a connector config file
+# Lint a connector config file (Python CLI)
 lint-config file:
     uv run strimzi-lint lint {{ file }}
 
-# Run tests
+# Lint a connector config file (Rust CLI)
+lint-config-rust file:
+    cargo run -q -p strimzi-lint -- lint {{ file }}
+
+# Run Python tests
 test:
     @echo "Running tests..."
     uv run pytest tests/ -v
+
+# Run Rust workspace tests
+rust-test:
+    cargo test --workspace
 
 # Format Python code with black
 format:
     @echo "Formatting Python code..."
     uv run black strimzi_ops/ app.py
 
+# Format Rust with rustfmt
+rust-fmt:
+    cargo fmt --all
+
 # Lint Python code with ruff
 lint:
     @echo "Linting Python code..."
     uv run ruff check strimzi_ops/ app.py
+
+# Clippy + rustfmt check (Canonical preconditions)
+rust-check:
+    cargo fmt --all -- --check
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Run format check + ruff
 check:

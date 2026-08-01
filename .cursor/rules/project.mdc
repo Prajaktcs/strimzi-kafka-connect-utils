@@ -1,0 +1,39 @@
+---
+description: Strimzi Ops project context and Python→Rust migration plan
+alwaysApply: true
+---
+
+# Strimzi Ops — agent instructions
+
+## What this repo is
+
+Ops toolkit for Kafka Connect on Strimzi: connector **lint** (CLI), **monitor**, and **control** (Streamlit UI today).
+
+## Language migration
+
+We are moving from Python to Rust incrementally. Prefer Rust for new shared logic.
+
+1. **Done / in progress:** `strimzi-ops-core` + `strimzi-lint` (lint CLI parity)
+2. **Next:** Connect REST client, Kafka monitor, then UI (not RustView for production; prefer Axum+HTMX or similar later)
+3. **Until replaced:** keep Python Streamlit/`strimzi_ops` working; do not break `just lint-config` / UI without an equivalent
+
+## Where standards live
+
+- Rust style: [docs/rust-best-practices.md](docs/rust-best-practices.md) — **must follow** [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html)
+- Cursor rules: `.cursor/rules/` (this file + Rust-specific rules)
+
+## Workspace layout
+
+```
+crates/strimzi-ops-core/   # library
+crates/strimzi-lint/       # binary CLI
+strimzi_ops/               # Python package (legacy during migration)
+app.py                     # Streamlit UI
+```
+
+## Checks before finishing Rust work
+
+```bash
+just rust-check   # fmt + clippy -D warnings
+just rust-test
+```

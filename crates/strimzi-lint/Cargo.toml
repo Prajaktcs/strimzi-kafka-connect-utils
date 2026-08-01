@@ -1,0 +1,21 @@
+[package]
+name = "strimzi-lint"
+description = "CLI to lint Kafka Connect connector configurations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "strimzi-lint"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+serde_json.workspace = true
+strimzi-ops-core.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

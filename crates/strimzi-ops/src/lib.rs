@@ -197,14 +197,17 @@ impl From<FormatArg> for ConfigFormat {
 }
 
 pub fn run_ops(cli: Cli) -> Result<ExitCode> {
-    let settings = load_settings(
-        cli.secrets.as_deref(),
-        cli.connect_url,
-        cli.bootstrap_servers,
-        cli.cluster_name,
-    )?;
+    let Cli {
+        secrets,
+        connect_url,
+        bootstrap_servers,
+        cluster_name,
+        command,
+    } = cli;
 
-    match cli.command {
+    match command {
+        // Lint does not need Connect/Kafka settings; skip secrets.toml so a broken
+        // local secrets file cannot fail an unrelated lint run.
         Commands::Lint {
             file,
             config,
@@ -213,14 +216,32 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
             strict,
         } => lint_command(&file, config.as_deref(), format, json_output, strict),
         Commands::Connectors { command } => {
+            let settings = load_settings(
+                secrets.as_deref(),
+                connect_url,
+                bootstrap_servers,
+                cluster_name,
+            )?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             connectors_command(&client, command, &settings)
         }
         Commands::Cluster { command } => {
+            let settings = load_settings(
+                secrets.as_deref(),
+                connect_url,
+                bootstrap_servers,
+                cluster_name,
+            )?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             cluster_command(&client, command)
         }
         Commands::Snapshot { command } => {
+            let settings = load_settings(
+                secrets.as_deref(),
+                connect_url,
+                bootstrap_servers,
+                cluster_name,
+            )?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             snapshot_command(&client, command, &settings)
         }
@@ -229,7 +250,15 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
             group_id,
             duration_secs,
             json_output,
-        } => monitor_command(&settings, &topic, &group_id, duration_secs, json_output),
+        } => {
+            let settings = load_settings(
+                secrets.as_deref(),
+                connect_url,
+                bootstrap_servers,
+                cluster_name,
+            )?;
+            monitor_command(&settings, &topic, &group_id, duration_secs, json_output)
+        }
     }
 }
 

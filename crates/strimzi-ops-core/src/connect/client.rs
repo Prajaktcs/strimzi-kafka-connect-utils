@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use reqwest::blocking::{Client, Response};
 use reqwest::Method;
 use serde::de::DeserializeOwned;
@@ -9,6 +11,9 @@ use crate::connect::types::{
 };
 use crate::{Error, Result};
 
+/// Default HTTP timeout for Connect REST calls.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Blocking Kafka Connect REST API client.
 #[derive(Debug, Clone)]
 pub struct ConnectClient {
@@ -19,12 +24,18 @@ pub struct ConnectClient {
 impl ConnectClient {
     /// Create a client for `connect_url` (for example `http://localhost:8083`).
     pub fn new(connect_url: &str) -> Result<Self> {
+        Self::with_timeout(connect_url, DEFAULT_TIMEOUT)
+    }
+
+    /// Create a client with a custom request timeout.
+    pub fn with_timeout(connect_url: &str, timeout: Duration) -> Result<Self> {
         let trimmed = connect_url.trim_end_matches('/');
         let base_url = Url::parse(trimmed).map_err(|source| Error::InvalidConnectUrl {
             url: trimmed.to_owned(),
             reason: source.to_string(),
         })?;
         let http = Client::builder()
+            .timeout(timeout)
             .default_headers({
                 let mut headers = reqwest::header::HeaderMap::new();
                 headers.insert(

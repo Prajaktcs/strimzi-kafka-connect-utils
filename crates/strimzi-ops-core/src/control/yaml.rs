@@ -40,12 +40,32 @@ pub fn to_strimzi_yaml(
             continue;
         };
         match value {
-            Value::String(text) => lines.push(format!("    {key}: \"{text}\"")),
+            Value::String(text) => {
+                lines.push(format!(
+                    "    {key}: \"{}\"",
+                    escape_yaml_double_quoted(text)
+                ));
+            }
             other => lines.push(format!("    {key}: {other}")),
         }
     }
 
     lines.join("\n")
+}
+
+fn escape_yaml_double_quoted(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 #[cfg(test)]
@@ -71,5 +91,17 @@ mod tests {
         let topic_pos = yaml.find("topic:").expect("topic");
         let port_pos = yaml.find("database.port:").expect("port");
         assert!(port_pos < topic_pos);
+    }
+
+    #[test]
+    fn escapes_special_characters_in_string_values() {
+        let mut config = Map::new();
+        config.insert(
+            "query".to_owned(),
+            json!("select \"id\" from t\nwhere a\\b"),
+        );
+
+        let yaml = to_strimzi_yaml("demo", &config, "cluster");
+        assert!(yaml.contains("    query: \"select \\\"id\\\" from t\\nwhere a\\\\b\""));
     }
 }

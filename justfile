@@ -164,7 +164,11 @@ lint-config file:
 
 # Lint a connector config file (Rust CLI)
 lint-config-rust file:
-    cargo run -q -p strimzi-lint -- lint {{ file }}
+    cargo run -q -p strimzi-ops --bin strimzi-lint -- lint {{ file }}
+
+# Example: list connectors via Rust CLI (needs Connect URL)
+connectors-list connect_url="http://localhost:8083":
+    cargo run -q -p strimzi-ops -- --connect-url {{ connect_url }} connectors list
 
 # Run Python tests
 test:
@@ -173,7 +177,7 @@ test:
 
 # Run Rust workspace tests
 rust-test:
-    cargo test --workspace
+    cargo test --workspace --all-features
 
 # Format Python code with black
 format:

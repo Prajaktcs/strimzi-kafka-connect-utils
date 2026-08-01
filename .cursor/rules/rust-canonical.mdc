@@ -14,7 +14,7 @@ Upstream: https://canonical.github.io/rust-best-practices/introduction.html
 - `cargo fmt`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace`
 - `mod.rs` only declares modules / re-exports (no logic)
 - Library: `Error` + `Result` in `lib.rs` right after `mod`/`use`
-- Binary: `error.rs` + `result.rs` at crate root
+- Binary: `error.rs` + `result.rs` at crate root (`strimzi-ops`)
 - Concrete `thiserror` in libraries — **no** `anyhow` / `Box<dyn Error>` in `strimzi-ops-core`
 - Convert foreign errors at the boundary; messages like `cannot …` (lowercase unless acronyms)
 - No `.unwrap()` / `.expect()` outside tests or true programmer errors (e.g. static regex)

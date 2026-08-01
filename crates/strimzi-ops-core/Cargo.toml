@@ -1,19 +1,30 @@
 [package]
 name = "strimzi-ops-core"
-description = "Core library for Strimzi Ops: connector linting and validation"
+description = "Core library for Strimzi Ops: lint, Connect client, control, and monitor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+kafka = ["dep:rdkafka", "dep:uuid"]
+
 [dependencies]
+rdkafka = { workspace = true, optional = true }
 regex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
 thiserror.workspace = true
 toml.workspace = true
+url.workspace = true
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+httpmock = "0.7"
 
 [lints]
 workspace = true

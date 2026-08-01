@@ -280,10 +280,27 @@ Manage your connectors:
 }
 ```
 
+## Rust lint CLI (migration in progress)
+
+Step 1 of the Python → Rust migration provides a Cargo workspace with:
+
+- `strimzi-ops-core` — connector lint rules + schema validation library
+- `strimzi-lint` — CLI with the same `lint` subcommand flags as the Python tool
+
+```bash
+cargo run -p strimzi-lint -- lint examples/debezium-postgres-connector.yaml
+# or
+just lint-config-rust examples/debezium-postgres-connector.yaml
+```
+
+Rust code follows [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html); see [docs/rust-best-practices.md](docs/rust-best-practices.md).
+
 ## Project Structure
 
 ```
 strimzi-ops/
+├── Cargo.toml                      # Rust workspace (core + lint CLI)
+├── crates/                         # Rust crates (see docs/rust-best-practices.md)
 ├── app.py                          # Streamlit application (Monitor & Control UI)
 ├── pyproject.toml                  # Project config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)

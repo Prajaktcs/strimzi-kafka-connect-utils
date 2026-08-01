@@ -47,8 +47,8 @@ build-connect:
     if docker buildx version >/dev/null 2>&1; then
       docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     else
-      # Colima / Docker without the buildx plugin
-      DOCKER_BUILDKIT=1 docker build -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
+      # Colima / Docker without the buildx plugin — legacy builder
+      DOCKER_BUILDKIT=0 docker build -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     fi
     echo "Image {{ connect_image }} ready."
 

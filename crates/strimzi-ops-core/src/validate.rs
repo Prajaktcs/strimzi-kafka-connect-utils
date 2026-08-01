@@ -1,5 +1,3 @@
-//! High-level validation combining lint rules and schema checks.
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -13,21 +11,15 @@ use crate::parse::{parse_config_text, with_name, ConfigFormat};
 use crate::schema::validate_schema;
 use crate::Result;
 
-/// Combined lint + schema validation report.
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidationReport {
-    /// `true` when there are no error-severity findings.
     pub valid: bool,
-    /// All findings (lint rules and schema checks).
     pub results: Vec<LintResult>,
-    /// Counts by severity.
     pub summary: Summary,
-    /// Human-readable formatted output.
     #[serde(skip_serializing)]
     pub formatted: String,
 }
 
-/// Validate a parsed connector configuration.
 pub fn validate_config(
     config: serde_json::Map<String, Value>,
     connector_name: Option<&str>,
@@ -40,7 +32,6 @@ pub fn validate_config(
     Ok(build_report(results))
 }
 
-/// Validate raw connector configuration text.
 pub fn validate_text(
     text: &str,
     format: ConfigFormat,

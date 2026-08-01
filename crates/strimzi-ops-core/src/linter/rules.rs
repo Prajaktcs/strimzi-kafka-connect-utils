@@ -1,26 +1,19 @@
-//! Built-in connector lint rules.
-
 use serde_json::Value;
 
 use crate::linter::types::{LintResult, Severity};
 
-/// A named lint rule with a check function.
 pub struct Rule {
-    /// Stable rule identifier.
     pub id: &'static str,
-    /// Default severity when no override is configured.
     pub severity: Severity,
     check: fn(&serde_json::Map<String, Value>) -> Vec<LintResult>,
 }
 
 impl Rule {
-    /// Run the rule against a parsed connector config map.
     pub fn check(&self, config: &serde_json::Map<String, Value>) -> Vec<LintResult> {
         (self.check)(config)
     }
 }
 
-/// Built-in rules matching the Python `ConnectorLinter` implementation.
 pub fn builtin_rules() -> Vec<Rule> {
     vec![
         Rule {

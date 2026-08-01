@@ -1,5 +1,3 @@
-//! Connector-class schema validation (Pydantic model parity).
-
 use serde_json::Value;
 
 use crate::linter::types::{LintResult, Severity};
@@ -8,7 +6,6 @@ const SCHEMA_RULE: &str = "pydantic-schema";
 
 const SNAPSHOT_MODES: &[&str] = &["initial", "always", "never", "when_needed", "schema_only"];
 
-/// Validate connector configuration against class-specific schemas.
 pub fn validate_schema(config: &serde_json::Map<String, Value>) -> Vec<LintResult> {
     let mut results = Vec::new();
 

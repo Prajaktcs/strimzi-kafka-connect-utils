@@ -1,5 +1,3 @@
-//! Linter for Kafka Connect connector configurations.
-
 pub mod config;
 pub mod directives;
 pub mod engine;

@@ -1,11 +1,8 @@
-//! Comment-based lint directives (`# lint-disable: …`).
-
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
 
-/// Parse `# lint-disable` / `# lint-disable-file` directives from config text.
 pub fn parse_lint_directives(text: &str) -> BTreeSet<String> {
     static PATTERNS: OnceLock<[Regex; 2]> = OnceLock::new();
     let patterns = PATTERNS.get_or_init(|| {

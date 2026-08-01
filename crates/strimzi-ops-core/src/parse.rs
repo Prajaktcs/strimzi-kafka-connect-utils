@@ -1,23 +1,16 @@
-//! Parse connector configuration text as JSON or YAML.
-
 use serde_json::Value;
 
 use crate::{Error, Result};
 
-/// Supported connector configuration formats.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConfigFormat {
-    /// Detect JSON first, then YAML.
     #[default]
     Auto,
-    /// Strict JSON.
     Json,
-    /// Strict YAML.
     Yaml,
 }
 
 impl ConfigFormat {
-    /// Parse a CLI/format string (`auto`, `json`, `yaml`).
     pub fn parse(value: &str) -> Result<Self> {
         match value.to_ascii_lowercase().as_str() {
             "auto" => Ok(Self::Auto),
@@ -29,7 +22,6 @@ impl ConfigFormat {
         }
     }
 
-    /// Infer format from a file extension.
     pub fn from_extension(ext: Option<&str>) -> Self {
         match ext.map(str::to_ascii_lowercase).as_deref() {
             Some("json") => Self::Json,
@@ -39,7 +31,6 @@ impl ConfigFormat {
     }
 }
 
-/// Parse connector configuration text into a JSON object map.
 pub fn parse_config_text(
     text: &str,
     format: ConfigFormat,
@@ -87,7 +78,7 @@ fn parse_json(text: &str) -> Result<Value> {
 }
 
 fn parse_yaml(text: &str) -> Result<Value> {
-    // Convert via YAML → JSON value so lint rules see a uniform tree.
+    // Normalise YAML to JSON so lint rules share one value tree.
     let yaml_value: serde_yaml::Value = serde_yaml::from_str(text).map_err(|err| Error::Parse {
         format: "yaml",
         reason: err.to_string(),
@@ -98,8 +89,7 @@ fn parse_yaml(text: &str) -> Result<Value> {
     })
 }
 
-/// Ensure `name` is present, injecting `connector_name` when the Connect REST
-/// API omits it from `/connectors/{name}/config` payloads.
+/// Inject `name` when omitted (Kafka Connect REST `/connectors/{name}/config`).
 pub fn with_name(
     mut config: serde_json::Map<String, Value>,
     connector_name: Option<&str>,

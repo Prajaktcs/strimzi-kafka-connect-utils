@@ -1,5 +1,3 @@
-//! Linter configuration loaded from `.lintrc.toml`.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -9,14 +7,10 @@ use serde::Deserialize;
 use crate::linter::types::Severity;
 use crate::{Error, Result};
 
-/// Configuration for which rules run and at what severity.
 #[derive(Debug, Clone, Default)]
 pub struct LinterConfig {
-    /// Globally disabled rule IDs.
     pub disabled_rules: BTreeSet<String>,
-    /// Per-rule severity overrides.
     pub rule_severities: BTreeMap<String, Severity>,
-    /// Per-connector rule exemptions.
     pub connector_exemptions: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -31,8 +25,6 @@ struct RawLinterConfig {
 }
 
 impl LinterConfig {
-    /// Load configuration from a TOML file.
-    ///
     /// Missing files yield the default (empty) configuration.
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -51,7 +43,6 @@ impl LinterConfig {
         })
     }
 
-    /// Parse configuration from TOML text.
     pub fn parse_toml(text: &str) -> std::result::Result<Self, String> {
         let raw: RawLinterConfig =
             toml::from_str(text).map_err(|err| format!("invalid TOML: {err}"))?;
@@ -77,7 +68,6 @@ impl LinterConfig {
         })
     }
 
-    /// Whether a rule should run for an optional connector name.
     pub fn is_rule_enabled(&self, rule_id: &str, connector_name: Option<&str>) -> bool {
         if self.disabled_rules.contains(rule_id) {
             return false;
@@ -94,7 +84,6 @@ impl LinterConfig {
         true
     }
 
-    /// Resolve the effective severity for a rule.
     pub fn severity_for(&self, rule_id: &str, default: Severity) -> Severity {
         self.rule_severities
             .get(rule_id)

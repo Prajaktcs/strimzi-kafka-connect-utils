@@ -1,7 +1,3 @@
-//! `strimzi-lint` — lint Kafka Connect connector configurations.
-//!
-//! Follows Canonical's [Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html).
-
 mod error;
 mod result;
 

@@ -1,5 +1,3 @@
-//! Connector linter engine.
-
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -12,15 +10,12 @@ use crate::linter::types::{LintResult, Summary};
 use crate::parse::{parse_config_text, ConfigFormat};
 use crate::Result;
 
-/// Linter for Kafka Connect connector configurations.
 pub struct ConnectorLinter {
     config: LinterConfig,
     rules: Vec<Rule>,
 }
 
 impl ConnectorLinter {
-    /// Create a linter, loading optional config from `config_path`.
-    ///
     /// When `config_path` is `None`, defaults to `.lintrc.toml` if present.
     pub fn new(config_path: Option<&Path>) -> Result<Self> {
         let path = config_path.unwrap_or_else(|| Path::new(".lintrc.toml"));
@@ -31,7 +26,6 @@ impl ConnectorLinter {
         })
     }
 
-    /// Create a linter from an already-loaded config (useful in tests).
     pub fn with_config(config: LinterConfig) -> Self {
         Self {
             config,
@@ -39,14 +33,12 @@ impl ConnectorLinter {
         }
     }
 
-    /// Lint raw configuration text (YAML or JSON), including comment directives.
     pub fn lint_text(&self, text: &str, format: ConfigFormat) -> Result<Vec<LintResult>> {
         let disabled_inline = parse_lint_directives(text);
         let config = parse_config_text(text, format)?;
         Ok(self.lint(&config, &disabled_inline))
     }
 
-    /// Lint a parsed connector configuration map.
     pub fn lint(
         &self,
         config: &serde_json::Map<String, Value>,
@@ -72,12 +64,10 @@ impl ConnectorLinter {
         results
     }
 
-    /// Summarise findings by severity.
     pub fn summary(results: &[LintResult]) -> Summary {
         Summary::from_results(results)
     }
 
-    /// Format findings for human-readable CLI output.
     pub fn format_results(results: &[LintResult]) -> String {
         if results.is_empty() {
             return "✅ No issues found".to_owned();

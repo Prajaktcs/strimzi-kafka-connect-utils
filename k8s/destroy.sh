@@ -33,8 +33,8 @@ if kubectl get deployment nessie -n ${NAMESPACE} &> /dev/null; then
 fi
 
 if kubectl get job garage-setup -n ${NAMESPACE} &> /dev/null; then
-    echo "  - Garage Setup"
-    kubectl delete -f 04-garage-setup.yaml
+    echo "  - Garage Setup (legacy)"
+    kubectl delete job garage-setup -n ${NAMESPACE} --ignore-not-found=true || true
 fi
 
 if kubectl get statefulset garage -n ${NAMESPACE} &> /dev/null; then

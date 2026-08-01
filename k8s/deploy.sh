@@ -83,30 +83,14 @@ echo "Waiting for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgres -n ${NAMESPACE} --timeout=300s
 echo "PostgreSQL is ready"
 
-# Deploy Garage S3
+# Deploy Garage S3 (v2.3 single-node auto-bootstrap with fixed local-dev keys)
 echo "  - Garage S3"
 kubectl apply -f 04-garage.yaml
 
 # Wait for Garage to be ready
 echo "Waiting for Garage to be ready..."
 kubectl wait --for=condition=ready pod -l app=garage -n ${NAMESPACE} --timeout=300s
-echo "Garage is ready"
-
-# Run Garage Setup
-echo "  - Garage Setup Job"
-kubectl delete job garage-setup -n ${NAMESPACE} 2>/dev/null || true
-kubectl apply -f 04-garage-setup.yaml
-echo "Waiting for Garage Setup to complete..."
-kubectl wait --for=condition=complete job/garage-setup -n ${NAMESPACE} --timeout=120s
-echo "Garage Setup complete"
-
-# Retrieve S3 Keys from Job logs
-echo "Retrieving S3 Credentials..."
-POD_NAME=$(kubectl get pods -n ${NAMESPACE} -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
-echo "---------------------------------------------------"
-kubectl logs $POD_NAME -n ${NAMESPACE} | grep "Key ID" || true
-kubectl logs $POD_NAME -n ${NAMESPACE} | grep "Secret Key" || true
-echo "---------------------------------------------------"
+echo "Garage is ready (bucket=warehouse, keys are fixed local-dev values in 04-garage.yaml)"
 
 # Deploy Nessie Catalog
 echo "  - Nessie Iceberg Catalog"

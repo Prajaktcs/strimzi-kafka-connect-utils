@@ -85,30 +85,12 @@ garage_logs() {
 }
 
 sync_secrets() {
-  local logs key_id secret_key
-  logs="$(garage_logs)" || {
-    echo "Could not read Garage setup logs; writing placeholder secrets.toml"
-    key_id="YOUR_ACCESS_KEY"
-    secret_key="YOUR_SECRET_KEY"
-    write_secrets "${key_id}" "${secret_key}"
-    return 0
-  }
-
-  # Garage prints: "Key ID: GK…" and "Secret key: …"
-  key_id="$(printf '%s\n' "${logs}" | awk -F': ' 'BEGIN{IGNORECASE=1} /^[[:space:]]*Key ID:/{gsub(/[[:space:]]/,"",$2); print $2; exit}')"
-  secret_key="$(printf '%s\n' "${logs}" | awk -F': ' 'BEGIN{IGNORECASE=1} /^[[:space:]]*Secret key:/{gsub(/[[:space:]]/,"",$2); print $2; exit}')"
-
-  if [[ -z "${key_id}" || -z "${secret_key}" || "${secret_key}" == *"*"* ]]; then
-    echo "Warning: could not parse Garage keys from setup logs."
-    echo "Check: kubectl logs -n ${NAMESPACE} -l job-name=garage-setup"
-    key_id="${key_id:-YOUR_ACCESS_KEY}"
-    secret_key="${secret_key:-YOUR_SECRET_KEY}"
-  else
-    echo "Synced Garage credentials into secrets.toml"
-    echo "  access_key=${key_id}"
-  fi
-
-  write_secrets "${key_id}" "${secret_key}"
+  # Garage 2.3 local stack uses fixed default credentials from 04-garage.yaml.
+  local access_key="GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local secret_key="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  write_secrets "${access_key}" "${secret_key}"
+  echo "Wrote local-dev Garage credentials to secrets.toml"
+  echo "  access_key=${access_key}"
 }
 
 write_secrets() {

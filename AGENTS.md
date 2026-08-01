@@ -18,25 +18,24 @@ Strimzi Ops: lint, monitor, and control Kafka Connect on Kubernetes/Strimzi.
 |------|--------|--------|
 | 1 | `strimzi-ops-core` lint + schema; CLI lint | Done |
 | 2 | Connect REST + control/monitor + `strimzi-ops` CLI | Done |
-| 3a | Axum + HTMX Dashboard + Control UI (`strimzi-ui`) | Started |
-| 3b | Live Monitor + kubectl logs; switch default `just run` | Planned |
+| 3a | Axum + HTMX Dashboard + Control UI (`strimzi-ui`); Streamlit removed | Started |
+| 3b | Live Monitor + kubectl logs in the Rust UI | Planned |
 
-Keep Python Streamlit (`just run`) until 3b. Prefer putting new domain logic in Rust crates under `crates/`.
+Prefer putting new domain logic in Rust crates under `crates/`. Python remains for `strimzi-lint` and transitional library helpers.
 
 ## Commands
 
 ```bash
 just rust-check          # fmt + clippy -D warnings
 just rust-test
-just ui                  # Rust Dashboard/Control UI (:8501)
-just run                 # Streamlit UI (still default for setup)
+just run                 # Rust UI (alias for just ui)
+just ui                  # strimzi-ui on :8501
 just lint-config-rust <file>
 cargo run -p strimzi-ops -- connectors list --connect-url http://localhost:8083
+just lint-config <file>  # Python CLI (still supported)
 ```
 
 Control/monitor builds need system **librdkafka** (and cmake when building `rdkafka` from source). On macOS: `brew install librdkafka cmake pkg-config`.
-
-`just ui` and `just run` both default to port **8501** — only one can bind at a time.
 
 ## Non-negotiables for Rust PRs
 

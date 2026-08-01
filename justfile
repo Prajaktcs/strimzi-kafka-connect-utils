@@ -13,7 +13,7 @@
 #   6. write secrets.toml with local-dev Garage keys
 #   7. apply sample Postgres source + Iceberg sink connectors
 #   8. start background port-forwards
-#   9. launch Streamlit UI
+#   9. launch Rust web UI (strimzi-ui)
 #
 # Tear down:
 #   just destroy        # app namespace (+ stop port-forwards)
@@ -52,8 +52,8 @@ setup: install ensure-cluster build-connect deploy sync-secrets apply-connector 
     @echo "  UI          : http://localhost:8501"
     @echo ""
     @echo "Stack: Strimzi {{ strimzi_version }} / Kafka {{ kafka_version }} / Debezium {{ debezium_version }}"
-    @echo "Starting Streamlit UI..."
-    uv run streamlit run app.py
+    @echo "Starting strimzi-ui..."
+    just ui
 
 # Alias for setup
 up: setup
@@ -153,12 +153,10 @@ port-forward-nessie:
     @echo "Nessie → http://localhost:19120 (Ctrl+C to stop)"
     kubectl port-forward svc/nessie 19120:19120 -n {{ namespace }}
 
-# Start Streamlit UI (assumes setup / port-forward-all already ran)
-run:
-    @echo "Starting Strimzi Ops Platform (Streamlit)..."
-    uv run streamlit run app.py
+# Start Rust web UI (assumes setup / port-forward-all already ran)
+run: ui
 
-# Start Rust Axum UI (Dashboard + Control). Conflicts with Streamlit on :8501.
+# Start strimzi-ui (Dashboard + Control) on http://127.0.0.1:<port>
 ui port="8501":
     @echo "Starting strimzi-ui on http://127.0.0.1:{{ port }} ..."
     cargo run -q -p strimzi-ui -- --port {{ port }}
@@ -187,7 +185,7 @@ rust-test:
 # Format Python code with black
 format:
     @echo "Formatting Python code..."
-    uv run black strimzi_ops/ app.py
+    uv run black strimzi_ops/
 
 # Format Rust with rustfmt
 rust-fmt:
@@ -196,7 +194,7 @@ rust-fmt:
 # Lint Python code with ruff
 lint:
     @echo "Linting Python code..."
-    uv run ruff check strimzi_ops/ app.py
+    uv run ruff check strimzi_ops/
 
 # Clippy + rustfmt check (Canonical preconditions)
 rust-check:
@@ -206,6 +204,6 @@ rust-check:
 # Run format check + ruff
 check:
     @echo "Running code quality checks..."
-    uv run black --check strimzi_ops/ app.py
-    uv run ruff check strimzi_ops/ app.py
+    uv run black --check strimzi_ops/
+    uv run ruff check strimzi_ops/
     @echo "All checks passed!"

@@ -34,7 +34,7 @@ struct Cli {
     #[arg(long = "bind", default_value = "127.0.0.1")]
     bind: String,
 
-    /// Listen port (default 8501; conflicts with Streamlit if both run)
+    /// Listen port (default 8501)
     #[arg(long = "port", default_value_t = 8501)]
     port: u16,
 }
@@ -78,7 +78,6 @@ async fn run() -> strimzi_ui::result::Result<()> {
         })?;
 
     println!("strimzi-ui listening on http://{addr}");
-    println!("Note: Streamlit (`just run`) also defaults to :8501 — only one can bind that port.");
 
     axum::serve(listener, app)
         .await

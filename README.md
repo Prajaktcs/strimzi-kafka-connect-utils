@@ -50,10 +50,9 @@ This is the recommended setup for actual use:
 │   Your Local Machine                    │
 │                                         │
 │  ┌──────────────────────────────────┐  │
-│  │  Strimzi Ops (Python)            │  │
-│  │  - Linter CLI                    │  │
-│  │  - Monitor UI (Streamlit)        │  │
-│  │  - Control UI (Streamlit)        │  │
+│  │  Strimzi Ops                     │  │
+│  │  - Linter CLI (Python/Rust)      │  │
+│  │  - Web UI (strimzi-ui / Axum)    │  │
 │  └──────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 ```
@@ -67,7 +66,7 @@ For testing locally, use the provided Kubernetes manifests:
 - **Database**: PostgreSQL 18.4 with CDC enabled
 - **Kafka Connect**: With Debezium 3.6.0 (PostgreSQL connector)
 - **Object Storage / Catalog**: Garage 2.3.0 + Nessie 0.108.4
-- **App Logic**: Python 3.14+ (Streamlit + Confluent Kafka + Pydantic)
+- **App Logic**: Rust (`strimzi-ops` / `strimzi-ui`) + Python helpers during migration
 
 See the "Local Development Environment" section below for details.
 
@@ -120,7 +119,7 @@ git clone <repository-url>
 cd strimzi-ops
 
 # 2. One command: Colima (if needed), deps, Connect image, K8s stack,
-#    secrets.toml, sample connector, port-forwards, and Streamlit UI
+#    secrets.toml, sample connector, port-forwards, and Rust UI
 just setup
 ```
 
@@ -159,7 +158,8 @@ Run `just --list` to see all recipes. The important ones:
   just destroy            - Tear down k8s resources + stop port-forwards
   just status             - Check deployment status
   just stop-forwards      - Stop background port-forwards only
-  just run                - Restart Streamlit UI (stack already up)
+  just run                - Start Rust web UI (alias for just ui)
+  just ui                 - Start strimzi-ui on :8501
   just lint-config <file> - Lint a connector config
 ```
 
@@ -286,8 +286,8 @@ Python → Rust migration steps:
 
 1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
 2. **Done:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
-3a. **Current:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Monitor is a placeholder
-3b. **Planned:** live Monitor + kubectl logs; switch `just run` / setup off Streamlit
+3a. **Current:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed
+3b. **Planned:** live Monitor + kubectl logs in the Rust UI
 
 Cargo workspace:
 
@@ -306,9 +306,10 @@ cargo run -p strimzi-ops -- --connect-url http://localhost:8083 connectors list
 cargo run -p strimzi-ops -- --connect-url http://localhost:8083 --bootstrap-servers localhost:9092 \
   snapshot trigger my-connector --type incremental
 
-# Rust web UI (needs secrets.toml or --connect-url; default port 8501)
+# Web UI (needs secrets.toml or --connect-url; default port 8501)
+just run
+# or
 just ui
-# Streamlit remains: just run
 ```
 
 Kafka-backed commands need **librdkafka** (`brew install librdkafka cmake pkg-config` on macOS).
@@ -323,9 +324,8 @@ strimzi-ops/
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
 │   ├── strimzi-ops-core/           # lint, connect, control, monitor, settings
 │   ├── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
-│   └── strimzi-ui/                 # Axum Dashboard/Control UI
-├── app.py                          # Streamlit application (still default for just run)
-├── pyproject.toml                  # Project config & dependencies (uv)
+│   └── strimzi-ui/                 # Axum Dashboard/Control UI (just run)
+├── pyproject.toml                  # Python package config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)
 ├── secrets.toml.example            # Configuration template
 ├── justfile                        # Development commands (just)
@@ -441,7 +441,7 @@ just deploy
 5. Write `secrets.toml` with Garage credentials from the setup job
 6. Apply the sample Postgres source connector
 7. Start port-forwards in the background
-8. Launch the Streamlit UI
+8. Launch the Rust web UI (`strimzi-ui`)
 
 The first run takes 5–10 minutes.
 
@@ -536,7 +536,7 @@ just test
 
 ```bash
 # Format code with black
-uv run black strimzi_ops/ app.py
+uv run black strimzi_ops/
 
 # Or using Make
 just format
@@ -546,7 +546,7 @@ just format
 
 ```bash
 # Lint with ruff
-uv run ruff check strimzi_ops/ app.py
+uv run ruff check strimzi_ops/
 
 # Or using Make
 just lint

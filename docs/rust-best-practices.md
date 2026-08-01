@@ -73,7 +73,7 @@ Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and `R
 
 1. Core + lint CLI — done
 2. Connect client / monitor / control as library + CLI — done
-3a. Axum + HTMX Dashboard + Control (`strimzi-ui`) — current
-3b. Live Monitor + logs; make Rust UI the default — later
+3a. Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed — current
+3b. Live Monitor + logs in Rust UI — later
 
-Python Streamlit remains available via `just run` until 3b.
+Default UI is `just run` / `just ui` (`strimzi-ui`).

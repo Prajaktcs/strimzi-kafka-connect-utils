@@ -37,9 +37,34 @@ pub struct MissingConfigPage {
 }
 
 #[derive(Template, WebTemplate)]
+#[template(path = "missing_bootstrap.html")]
+pub struct MissingBootstrapPage {
+    pub active: &'static str,
+}
+
+#[derive(Template, WebTemplate)]
 #[template(path = "monitor.html")]
 pub struct MonitorPage {
     pub active: &'static str,
+    pub topic: String,
+    pub duration: u64,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SnapshotCard {
+    pub name: String,
+    pub status: String,
+    pub progress: u64,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "monitor_results.html")]
+pub struct MonitorResultsPage {
+    pub active: &'static str,
+    pub topic: String,
+    pub duration: u64,
+    pub snapshots: Vec<SnapshotCard>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +144,14 @@ pub struct YamlPage {
     pub active: &'static str,
     pub name: String,
     pub yaml: String,
+}
+
+#[derive(Template, WebTemplate)]
+#[template(path = "logs.html")]
+pub struct LogsPage {
+    pub active: &'static str,
+    pub name: String,
+    pub log_text: String,
 }
 
 #[derive(Template, WebTemplate)]

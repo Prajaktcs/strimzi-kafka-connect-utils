@@ -14,9 +14,8 @@ Ops toolkit for Kafka Connect on Strimzi: connector **lint**, **monitor**, and *
 We are moving from Python to Rust incrementally. Prefer Rust for new shared logic.
 
 1. **Done:** lint/schema, Connect client, control/monitor library, `strimzi-ops` CLI
-2. **In progress:** Axum + HTMX UI (`strimzi-ui`) — Dashboard + Control; Streamlit removed
-3. **Next:** live Monitor / kubectl logs in `strimzi-ui`
-4. **Python remains** for `strimzi-lint` and transitional helpers under `strimzi_ops/`
+2. **Done:** Axum + HTMX UI (`strimzi-ui`) — Dashboard, Control, timed Monitor, kubectl logs; Streamlit removed
+3. **Python remains** for `strimzi-lint` and transitional helpers under `strimzi_ops/`
 
 ## Where standards live
 
@@ -26,7 +25,7 @@ We are moving from Python to Rust incrementally. Prefer Rust for new shared logi
 ## Workspace layout
 
 ```
-crates/strimzi-ops-core/   # library (lint, connect, control, monitor, settings)
+crates/strimzi-ops-core/   # library (lint, connect, control, monitor, k8s, settings)
 crates/strimzi-ops/        # binaries: strimzi-ops + strimzi-lint
 crates/strimzi-ui/         # Axum + Askama + HTMX web UI (default just run/ui)
 strimzi_ops/               # Python package (CLI lint + legacy helpers)

@@ -221,7 +221,7 @@ Track snapshot progress in real-time:
 4. Set monitoring duration
 5. Click **Start Monitoring**
 
-The monitor will display real-time snapshot progress for all active connectors.
+The monitor consumes Debezium notifications for the selected duration, then shows snapshot status cards for connectors seen during the session.
 
 ### Control (UI)
 
@@ -235,6 +235,7 @@ Manage your connectors:
    - **Pause**: Pause a running connector
    - **Restart**: Restart a connector
    - **Trigger Snapshot**: Initiate a new snapshot
+   - **Logs**: View recent Connect pod logs filtered for the connector (requires `kubectl`)
 5. Edit configuration and update as needed
 
 ## Configuration Examples
@@ -286,8 +287,8 @@ Python → Rust migration steps:
 
 1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
 2. **Done:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
-3a. **Current:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed
-3b. **Planned:** live Monitor + kubectl logs in the Rust UI
+3a. **Done:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed
+3b. **Done:** timed Monitor + kubectl logs in the Rust UI
 
 Cargo workspace:
 
@@ -322,7 +323,7 @@ Rust code follows [Canonical Rust best practices](https://canonical.github.io/ru
 strimzi-ops/
 ├── Cargo.toml                      # Rust workspace (core + CLI + UI)
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
-│   ├── strimzi-ops-core/           # lint, connect, control, monitor, settings
+│   ├── strimzi-ops-core/           # lint, connect, control, monitor, k8s, settings
 │   ├── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
 │   └── strimzi-ui/                 # Axum Dashboard/Control UI (just run)
 ├── pyproject.toml                  # Python package config & dependencies (uv)

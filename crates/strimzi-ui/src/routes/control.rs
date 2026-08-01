@@ -6,15 +6,16 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use strimzi_ops_core::{
-    to_strimzi_yaml, validate_config, ConnectClient, CreateConnectorRequest, SnapshotTrigger,
+    fetch_logs, to_strimzi_yaml, validate_config, ConnectClient, CreateConnectorRequest,
+    SnapshotTrigger,
 };
 
-use crate::blocking::with_connect_client;
+use crate::blocking::{spawn_blocking, with_connect_client};
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    redirect, render, ControlPage, ControlRow, CreatePage, EditPage, HtmlResult, MissingConfigPage,
-    SnapshotPage, YamlPage,
+    redirect, render, ControlPage, ControlRow, CreatePage, EditPage, HtmlResult, LogsPage,
+    MissingConfigPage, SnapshotPage, YamlPage,
 };
 
 pub async fn control_list(
@@ -191,6 +192,18 @@ async fn load_yaml(state: &AppState, name: &str) -> crate::result::Result<String
         Ok(to_strimzi_yaml(&name_clone, &config, &cluster))
     })
     .await
+}
+
+pub async fn logs_view(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {
+    let cluster = state.cluster_name().to_owned();
+    let filter = name.clone();
+    let log_text =
+        spawn_blocking(move || Ok(fetch_logs(&cluster, 100, Some(filter.as_str()))?)).await?;
+    render(LogsPage {
+        active: "control",
+        name,
+        log_text,
+    })
 }
 
 pub async fn edit_form(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {

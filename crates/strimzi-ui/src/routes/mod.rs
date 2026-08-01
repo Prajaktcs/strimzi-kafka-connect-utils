@@ -14,7 +14,10 @@ pub fn router(state: AppState) -> Router {
             get(|| async { axum::response::Redirect::to("/dashboard") }),
         )
         .route("/dashboard", get(dashboard::dashboard))
-        .route("/monitor", get(monitor::monitor))
+        .route(
+            "/monitor",
+            get(monitor::monitor).post(monitor::monitor_submit),
+        )
         .route("/control", get(control::control_list))
         .route(
             "/control/create",
@@ -33,5 +36,6 @@ pub fn router(state: AppState) -> Router {
             "/control/{name}/edit",
             get(control::edit_form).post(control::edit_submit),
         )
+        .route("/control/{name}/logs", get(control::logs_view))
         .with_state(state)
 }

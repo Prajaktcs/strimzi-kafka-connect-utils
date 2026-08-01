@@ -94,6 +94,18 @@ input, select, textarea {
 .notice { background: var(--panel); border: 1px dashed var(--line); padding: 1rem; border-radius: 0.5rem; }
 .ok { color: var(--ok); }
 .mono, pre, code { font-family: var(--mono); }
+.progress {
+  height: 0.55rem;
+  background: #e8eef4;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.snapshot-card { display: grid; gap: 0.45rem; }
 pre.code, pre {
   background: #111827;
   color: #e5e7eb;

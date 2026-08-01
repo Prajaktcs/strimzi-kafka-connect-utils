@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Bootstrap servers required — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Bootstrap servers required</h2>
+<p>To use Monitor, provide Kafka bootstrap servers.</p>
+<pre>[kafka]
+bootstrap_servers = "localhost:9092"
+connect_url = "http://localhost:8083"
+connect_cluster_name = "my-connect-cluster"</pre>
+<p>Save as <code>secrets.toml</code>, or pass <code>--bootstrap-servers</code> / <code>--secrets</code> to <code>strimzi-ui</code>.</p>
+{% endblock %}

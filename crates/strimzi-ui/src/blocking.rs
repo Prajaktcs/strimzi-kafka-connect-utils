@@ -1,4 +1,4 @@
-//! Helpers to run Connect (blocking reqwest) work off the Tokio runtime.
+//! Helpers to run blocking work off the Tokio runtime.
 
 use strimzi_ops_core::ConnectClient;
 
@@ -11,12 +11,22 @@ where
     T: Send + 'static,
     F: FnOnce(&ConnectClient) -> Result<T> + Send + 'static,
 {
-    tokio::task::spawn_blocking(move || {
+    spawn_blocking(move || {
         let client = ConnectClient::new(&connect_url)?;
         op(&client)
     })
     .await
-    .map_err(|err| Error::Internal {
-        reason: err.to_string(),
-    })?
+}
+
+/// Run arbitrary blocking work on Tokio's blocking pool.
+pub async fn spawn_blocking<T, F>(op: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(op)
+        .await
+        .map_err(|err| Error::Internal {
+            reason: err.to_string(),
+        })?
 }

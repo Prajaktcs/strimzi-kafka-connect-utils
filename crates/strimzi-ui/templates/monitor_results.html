@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Monitor results — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Monitoring completed</h2>
+<p class="lede">Topic <code>{{ topic }}</code> for {{ duration }} seconds</p>
+
+{% if snapshots.is_empty() %}
+<div class="notice">
+  <p>No snapshot notifications were received during this session.</p>
+</div>
+{% else %}
+<div class="cards">
+  {% for s in snapshots %}
+  <div class="card snapshot-card">
+    <strong>{{ s.name }}</strong>
+    <p>Status: {{ s.status }} — Progress: {{ s.progress }}%</p>
+    <div class="progress" role="progressbar" aria-valuenow="{{ s.progress }}" aria-valuemin="0" aria-valuemax="100">
+      <span style="width: {{ s.progress }}%"></span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<p class="row">
+  <a class="button" href="/monitor">Monitor again</a>
+  <a class="button secondary" href="/dashboard">Back to Dashboard</a>
+</p>
+{% endblock %}

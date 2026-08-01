@@ -7,11 +7,11 @@
 #   1. uv sync
 #   2. start Colima+k8s if needed
 #   3. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
-#   4. build Connect image with Debezium
+#   4. build Connect image with Debezium + Iceberg sink
 #   5. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + Garage 2.3 + Nessie
 #      (wipes legacy v1beta2 Strimzi CRDs if present; installs operator into kafka ns)
 #   6. write secrets.toml with local-dev Garage keys
-#   7. apply sample Postgres source connector
+#   7. apply sample Postgres source + Iceberg sink connectors
 #   8. start background port-forwards
 #   9. launch Streamlit UI
 #
@@ -26,7 +26,8 @@ namespace := "kafka"
 strimzi_version := "1.1.0"
 kafka_version := "4.3.0"
 debezium_version := "3.6.0.Final"
-connect_image := "my-connect-cluster:0.0.2"
+iceberg_connect_version := "1.9.2"
+connect_image := "my-connect-cluster:0.0.3"
 helper := "scripts/local-dev.sh"
 
 # Garage 2.3 --single-node --default-bucket credentials (local-dev only).
@@ -74,9 +75,9 @@ ensure-cluster:
 ensure-buildx:
     bash {{ helper }} ensure-buildx
 
-# Build local Kafka Connect image (Debezium Postgres plugin) via BuildKit
+# Build local Kafka Connect image (Debezium Postgres + Iceberg sink) via BuildKit
 build-connect: ensure-buildx
-    @echo "Building Connect image {{ connect_image }} (Debezium {{ debezium_version }})..."
+    @echo "Building Connect image {{ connect_image }} (Debezium {{ debezium_version }}, Iceberg {{ iceberg_connect_version }})..."
     docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     @echo "Image {{ connect_image }} ready."
 
@@ -115,7 +116,7 @@ destroy-hard: stop-forwards
 sync-secrets:
     bash {{ helper }} sync-secrets "{{ garage_access_key }}" "{{ garage_secret_key }}" "{{ garage_bucket }}" "{{ garage_endpoint }}"
 
-# Deploy the sample Debezium Postgres KafkaConnector
+# Deploy the sample Debezium Postgres source + Iceberg sink connectors
 apply-connector:
     bash {{ helper }} apply-connector
 

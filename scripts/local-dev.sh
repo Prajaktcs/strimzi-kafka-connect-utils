@@ -109,6 +109,8 @@ EOF
 apply_connector() {
   echo "Applying postgres source connector..."
   kubectl apply -f "${ROOT}/k8s/test-connector.yaml"
+  echo "Applying iceberg sink connector..."
+  kubectl apply -f "${ROOT}/k8s/test-iceberg-sink.yaml"
 }
 
 start_port_forward() {

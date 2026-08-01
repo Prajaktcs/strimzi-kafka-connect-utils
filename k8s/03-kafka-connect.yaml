@@ -19,7 +19,7 @@ spec:
     config.storage.replication.factor: 1
     offset.storage.replication.factor: 1
     status.storage.replication.factor: 1
-  image: my-connect-cluster:0.0.2
+  image: my-connect-cluster:0.0.3
   resources:
     requests:
       memory: 1Gi

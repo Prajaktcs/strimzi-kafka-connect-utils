@@ -148,7 +148,7 @@ Deploys PostgreSQL 18.4 Alpine with logical replication enabled.
 Deploys single-node Kafka 4.3.0 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
 
 ### 03-kafka-connect.yaml
-Deploys Kafka Connect with Debezium PostgreSQL connector. Uses a custom local image `my-connect-cluster:0.0.2`.
+Deploys Kafka Connect with Debezium PostgreSQL + Iceberg sink connectors. Uses a custom local image `my-connect-cluster:0.0.3`.
 
 ### 04-garage.yaml
 Deploys Garage S3 v2.3.0 for object storage.

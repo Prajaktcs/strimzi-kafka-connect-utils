@@ -75,7 +75,9 @@ impl ConnectorLinter {
 
         let mut sorted = results.to_vec();
         sorted.sort_by(|a, b| {
-            (a.severity, a.rule_id.as_str()).cmp(&(b.severity, b.rule_id.as_str()))
+            b.severity
+                .cmp(&a.severity)
+                .then_with(|| a.rule_id.as_str().cmp(b.rule_id.as_str()))
         });
 
         let mut lines: Vec<String> = sorted.iter().map(ToString::to_string).collect();
@@ -86,5 +88,23 @@ impl ConnectorLinter {
             summary.errors, summary.warnings, summary.info
         ));
         lines.join("\n")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::linter::types::Severity;
+
+    #[test]
+    fn format_results_lists_errors_before_warnings() {
+        let results = vec![
+            LintResult::new("b-rule", Severity::Warning, "warn", None::<String>),
+            LintResult::new("a-rule", Severity::Error, "err", None::<String>),
+        ];
+        let formatted = ConnectorLinter::format_results(&results);
+        let error_pos = formatted.find("[a-rule]").unwrap();
+        let warning_pos = formatted.find("[b-rule]").unwrap();
+        assert!(error_pos < warning_pos);
     }
 }

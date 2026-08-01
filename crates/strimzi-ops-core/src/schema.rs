@@ -38,10 +38,8 @@ fn field_error(path: &str, message: impl Into<String>) -> LintResult {
 
 fn require_string(config: &serde_json::Map<String, Value>, key: &str) -> Option<LintResult> {
     match config.get(key) {
-        Some(Value::String(s)) if !s.is_empty() => None,
-        Some(Value::String(_)) | None => {
-            Some(field_error(key, format!("Field required for field {key}")))
-        }
+        Some(Value::String(_)) => None,
+        None => Some(field_error(key, format!("Field required for field {key}"))),
         Some(_) => Some(field_error(
             key,
             format!("Input should be a valid string for field {key}"),
@@ -145,5 +143,20 @@ mod tests {
         assert!(results
             .iter()
             .any(|r| r.path.as_deref() == Some("snapshot.mode")));
+    }
+
+    #[test]
+    fn empty_string_fields_are_accepted() {
+        let config = map(json!({
+            "name": "",
+            "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+            "database.hostname": "localhost",
+            "database.user": "postgres",
+            "database.password": "password",
+            "database.dbname": "test_db",
+            "topic.prefix": "test_prefix",
+        }));
+        let results = validate_schema(&config);
+        assert!(!results.iter().any(|r| r.path.as_deref() == Some("name")));
     }
 }

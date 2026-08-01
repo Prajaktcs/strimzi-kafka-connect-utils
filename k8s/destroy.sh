@@ -51,11 +51,25 @@ fi
 echo "  - Persistent Volume Claims"
 kubectl delete pvc --all -n ${NAMESPACE} 2>/dev/null || true
 
-# Delete namespace
-echo "  - Namespace"
-kubectl apply -f 00-namespace.yaml # Ensure file exists for delete if needed, but easier to just delete namespace
+# Delete namespace (includes operator when installed into kafka)
+echo "  - Namespace ${NAMESPACE}"
 kubectl delete namespace ${NAMESPACE} --wait=true || true
 
+# Also remove a leftover operator namespace from older setups
+if kubectl get namespace strimzi-system >/dev/null 2>&1; then
+  echo "  - Namespace strimzi-system"
+  kubectl delete namespace strimzi-system --wait=true || true
+fi
+
+# Optional full wipe of Strimzi CRDs (needed when jumping across major API versions)
+if [[ "${DESTROY_CRDS:-}" == "1" || "${DESTROY_CRDS:-}" == "true" ]]; then
+  echo "  - Strimzi CRDs"
+  kubectl get crd -o name | grep -E '\.(kafka|core)\.strimzi\.io$' | xargs kubectl delete --wait=true 2>/dev/null || true
+fi
+
 echo ""
-echo "All resources deleted (including Strimzi operator in ${NAMESPACE})."
+echo "All resources deleted."
+if [[ "${DESTROY_CRDS:-}" != "1" && "${DESTROY_CRDS:-}" != "true" ]]; then
+  echo "Tip: for a clean Strimzi major upgrade, re-run with DESTROY_CRDS=1"
+fi
 echo ""

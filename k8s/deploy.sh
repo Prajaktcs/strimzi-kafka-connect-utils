@@ -27,6 +27,21 @@ echo ""
 # Create app namespace first (operator will be installed here for local single-ns watch)
 kubectl apply -f 00-namespace.yaml
 
+# Strimzi 1.x dropped the v1beta2 API. Patching CRDs that still list v1beta2 in
+# status.storedVersions fails. For local dev, wipe legacy CRDs/operators first.
+if kubectl get crd kafkas.kafka.strimzi.io >/dev/null 2>&1; then
+  STORED_VERSIONS="$(kubectl get crd kafkas.kafka.strimzi.io -o jsonpath='{.status.storedVersions[*]}' 2>/dev/null || true)"
+  if [[ "${STORED_VERSIONS}" == *v1beta2* ]]; then
+    echo "Detected legacy Strimzi CRDs (storedVersions includes v1beta2)."
+    echo "Resetting Strimzi CRDs for a clean ${STRIMZI_VERSION} install..."
+    # Drop CRs first so CRD deletion is not blocked.
+    kubectl delete kafka,kafkanodepool,kafkaconnect,kafkaconnector --all -A --wait=false 2>/dev/null || true
+    kubectl get crd -o name | grep -E '\.(kafka|core)\.strimzi\.io$' | xargs kubectl delete --wait=true
+    kubectl delete namespace strimzi-system --wait=false 2>/dev/null || true
+    echo "Legacy Strimzi CRDs removed."
+  fi
+fi
+
 # Install or upgrade Strimzi operator to the pinned version (watches the kafka namespace)
 echo "Installing/upgrading Strimzi operator ${STRIMZI_VERSION} into ${NAMESPACE}..."
 OPERATOR_YAML="$(mktemp)"

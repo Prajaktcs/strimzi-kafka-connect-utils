@@ -61,6 +61,10 @@ status:
 destroy: stop-forwards
     cd k8s && ./destroy.sh
 
+# Destroy including Strimzi CRDs (use after major Strimzi upgrades)
+destroy-hard: stop-forwards
+    cd k8s && DESTROY_CRDS=1 ./destroy.sh
+
 # Write secrets.toml from Garage setup job credentials
 sync-secrets:
     bash {{ helper }} sync-secrets

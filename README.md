@@ -280,18 +280,32 @@ Manage your connectors:
 }
 ```
 
-## Rust lint CLI (migration in progress)
+## Rust CLI (migration in progress)
 
-Step 1 of the Python → Rust migration provides a Cargo workspace with:
+Python → Rust migration steps:
 
-- `strimzi-ops-core` — connector lint rules + schema validation library
-- `strimzi-lint` — CLI with the same `lint` subcommand flags as the Python tool
+1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
+2. **Current:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
+3. **Planned:** UI replacement
+
+Cargo workspace:
+
+- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor
+- `strimzi-ops` — primary CLI (`lint`, `connectors`, `cluster`, `snapshot`, `monitor`)
+- `strimzi-lint` — compatibility binary that only exposes `lint`
 
 ```bash
-cargo run -p strimzi-lint -- lint examples/debezium-postgres-connector.yaml
+cargo run -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
 # or
 just lint-config-rust examples/debezium-postgres-connector.yaml
+
+# Control examples (port-forward Connect first)
+cargo run -p strimzi-ops -- --connect-url http://localhost:8083 connectors list
+cargo run -p strimzi-ops -- --connect-url http://localhost:8083 --bootstrap-servers localhost:9092 \
+  snapshot trigger my-connector --type incremental
 ```
+
+Kafka-backed commands need **librdkafka** (`brew install librdkafka cmake pkg-config` on macOS).
 
 Rust code follows [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html); see [docs/rust-best-practices.md](docs/rust-best-practices.md) and [AGENTS.md](AGENTS.md). Cursor loads `.cursor/rules/` automatically in future sessions.
 
@@ -299,8 +313,10 @@ Rust code follows [Canonical Rust best practices](https://canonical.github.io/ru
 
 ```
 strimzi-ops/
-├── Cargo.toml                      # Rust workspace (core + lint CLI)
+├── Cargo.toml                      # Rust workspace (core + CLI)
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
+│   ├── strimzi-ops-core/           # lint, connect, control, monitor
+│   └── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
 ├── app.py                          # Streamlit application (Monitor & Control UI)
 ├── pyproject.toml                  # Project config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)

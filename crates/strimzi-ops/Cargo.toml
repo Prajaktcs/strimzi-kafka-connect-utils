@@ -1,0 +1,32 @@
+[package]
+name = "strimzi-ops"
+description = "CLI for Strimzi Ops: lint, control, and monitor Kafka Connect"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+default-run = "strimzi-ops"
+
+[lib]
+name = "strimzi_ops"
+path = "src/lib.rs"
+
+[[bin]]
+name = "strimzi-ops"
+path = "src/main.rs"
+
+[[bin]]
+name = "strimzi-lint"
+path = "src/bin/strimzi_lint.rs"
+
+[dependencies]
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+strimzi-ops-core = { workspace = true, features = ["kafka"] }
+thiserror.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

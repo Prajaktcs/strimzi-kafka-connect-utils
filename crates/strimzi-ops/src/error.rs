@@ -11,4 +11,10 @@ pub enum Error {
 
     #[error("cannot serialise JSON output: {reason}")]
     JsonOutput { reason: String },
+
+    #[error("cannot load secrets from {path}: {reason}")]
+    Secrets { path: PathBuf, reason: String },
+
+    #[error("missing required option: {option}")]
+    MissingOption { option: String },
 }

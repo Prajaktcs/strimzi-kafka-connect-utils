@@ -1,16 +1,14 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
-
 use axum::extract::{Query, State};
 use serde::Deserialize;
 use serde_json::Value;
-use strimzi_ops_core::ConnectClient;
 
+use crate::blocking::with_connect_client;
 use crate::state::AppState;
 use crate::views::{
     render, ConnectorSummary, DashboardMetrics, DashboardPage, FailedItem, HtmlResult,
     MissingConfigPage, StatusCount,
 };
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize)]
 pub struct FlashQuery {
@@ -21,23 +19,20 @@ pub async fn dashboard(
     State(state): State<AppState>,
     Query(query): Query<FlashQuery>,
 ) -> HtmlResult {
-    let Some(client) = state.client.clone() else {
+    if !state.has_connect_url() {
         return render(MissingConfigPage {
             active: "dashboard",
         });
-    };
+    }
 
-    let page = tokio::task::spawn_blocking(move || build_dashboard(&client, query.flash))
-        .await
-        .map_err(|err| crate::error::Error::Internal {
-            reason: err.to_string(),
-        })??;
-
+    let url = state.require_connect_url()?;
+    let flash = query.flash;
+    let page = with_connect_client(url, move |client| build_dashboard(client, flash)).await?;
     render(page)
 }
 
 fn build_dashboard(
-    client: &Arc<ConnectClient>,
+    client: &strimzi_ops_core::ConnectClient,
     flash: Option<String>,
 ) -> crate::result::Result<DashboardPage> {
     let cluster = client.get_cluster_info()?;

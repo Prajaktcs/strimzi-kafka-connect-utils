@@ -1,31 +1,38 @@
-use std::sync::Arc;
+use strimzi_ops_core::ConnectionSettings;
 
-use strimzi_ops_core::{ConnectClient, ConnectionSettings};
+use crate::error::Error;
+use crate::result::Result;
 
 /// Shared application state for Axum handlers.
+///
+/// Does not hold a `ConnectClient`: the blocking reqwest client must be created
+/// and dropped only on worker threads (`spawn_blocking`), never on the Tokio runtime.
 #[derive(Clone)]
 pub struct AppState {
     pub settings: ConnectionSettings,
-    pub client: Option<Arc<ConnectClient>>,
 }
 
 impl AppState {
     pub fn new(settings: ConnectionSettings) -> Self {
-        let client = settings
-            .connect_url
-            .as_deref()
-            .and_then(|url| ConnectClient::new(url).ok())
-            .map(Arc::new);
-        Self { settings, client }
+        Self { settings }
     }
 
-    pub fn require_client(&self) -> crate::result::Result<Arc<ConnectClient>> {
-        self.client
-            .clone()
-            .ok_or(crate::error::Error::ConfigRequired)
+    pub fn has_connect_url(&self) -> bool {
+        self.settings.connect_url.is_some()
+    }
+
+    pub fn require_connect_url(&self) -> Result<String> {
+        self.settings
+            .require_connect_url()
+            .map(str::to_owned)
+            .map_err(Error::from)
     }
 
     pub fn cluster_name(&self) -> &str {
         self.settings.cluster_name()
+    }
+
+    pub fn bootstrap_servers(&self) -> Option<String> {
+        self.settings.bootstrap_servers.clone()
     }
 }

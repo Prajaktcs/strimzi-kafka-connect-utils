@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::fmt::Write as _;
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue};
@@ -9,6 +9,7 @@ use strimzi_ops_core::{
     to_strimzi_yaml, validate_config, ConnectClient, CreateConnectorRequest, SnapshotTrigger,
 };
 
+use crate::blocking::with_connect_client;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
@@ -20,15 +21,12 @@ pub async fn control_list(
     State(state): State<AppState>,
     Query(query): Query<ControlQuery>,
 ) -> HtmlResult {
-    let Some(client) = state.client.clone() else {
+    if !state.has_connect_url() {
         return render(MissingConfigPage { active: "control" });
-    };
+    }
 
-    let page = tokio::task::spawn_blocking(move || build_control_page(&client, query))
-        .await
-        .map_err(|err| Error::Internal {
-            reason: err.to_string(),
-        })??;
+    let url = state.require_connect_url()?;
+    let page = with_connect_client(url, move |client| build_control_page(client, query)).await?;
     render(page)
 }
 
@@ -39,7 +37,7 @@ pub struct ControlQuery {
 }
 
 fn build_control_page(
-    client: &Arc<ConnectClient>,
+    client: &ConnectClient,
     query: ControlQuery,
 ) -> crate::result::Result<ControlPage> {
     let all = client.get_all_connectors_status()?;
@@ -103,13 +101,13 @@ async fn lifecycle_action<F>(state: AppState, name: String, action: F, verb: &st
 where
     F: FnOnce(&ConnectClient, &str) -> strimzi_ops_core::Result<()> + Send + 'static,
 {
-    let client = state.require_client()?;
+    let url = state.require_connect_url()?;
     let name_for_msg = name.clone();
-    tokio::task::spawn_blocking(move || action(&client, &name))
-        .await
-        .map_err(|err| Error::Internal {
-            reason: err.to_string(),
-        })??;
+    with_connect_client(url, move |client| {
+        action(client, &name)?;
+        Ok(())
+    })
+    .await?;
     Ok(redirect(&format!(
         "/control?flash={verb}%20{name_for_msg}&focus={name_for_msg}"
     )))
@@ -134,8 +132,8 @@ pub async fn snapshot_submit(
     Path(name): Path<String>,
     Form(form): Form<SnapshotForm>,
 ) -> HtmlResult {
-    let client = state.require_client()?;
-    let bootstrap = state.settings.bootstrap_servers.clone();
+    let url = state.require_connect_url()?;
+    let bootstrap = state.bootstrap_servers();
     let tables: Option<Vec<String>> = form.tables.as_ref().map(|raw| {
         raw.split(',')
             .map(str::trim)
@@ -146,14 +144,11 @@ pub async fn snapshot_submit(
     let snapshot_type = form.snapshot_type.clone();
     let name_clone = name.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        let trigger = SnapshotTrigger::new((*client).clone(), bootstrap);
-        trigger.trigger(&name_clone, &snapshot_type, tables.as_deref())
+    let result = with_connect_client(url, move |client| {
+        let trigger = SnapshotTrigger::new(client.clone(), bootstrap);
+        Ok(trigger.trigger(&name_clone, &snapshot_type, tables.as_deref())?)
     })
-    .await
-    .map_err(|err| Error::Internal {
-        reason: err.to_string(),
-    })??;
+    .await?;
 
     let msg = urlencoding_encode(&format!("Snapshot {}: {}", result.status, result.message));
     Ok(redirect(&format!("/control?flash={msg}&focus={name}")))
@@ -188,28 +183,23 @@ pub async fn yaml_download(State(state): State<AppState>, Path(name): Path<Strin
 }
 
 async fn load_yaml(state: &AppState, name: &str) -> crate::result::Result<String> {
-    let client = state.require_client()?;
+    let url = state.require_connect_url()?;
     let cluster = state.cluster_name().to_owned();
     let name_clone = name.to_owned();
-    tokio::task::spawn_blocking(move || {
+    with_connect_client(url, move |client| {
         let config = client.get_connector_config(&name_clone)?;
-        Ok::<_, strimzi_ops_core::Error>(to_strimzi_yaml(&name_clone, &config, &cluster))
+        Ok(to_strimzi_yaml(&name_clone, &config, &cluster))
     })
     .await
-    .map_err(|err| Error::Internal {
-        reason: err.to_string(),
-    })?
-    .map_err(Error::from)
 }
 
 pub async fn edit_form(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {
-    let client = state.require_client()?;
+    let url = state.require_connect_url()?;
     let name_clone = name.clone();
-    let config = tokio::task::spawn_blocking(move || client.get_connector_config(&name_clone))
-        .await
-        .map_err(|err| Error::Internal {
-            reason: err.to_string(),
-        })??;
+    let config = with_connect_client(url, move |client| {
+        Ok(client.get_connector_config(&name_clone)?)
+    })
+    .await?;
     let config_json = serde_json::to_string_pretty(&config).map_err(|err| Error::Json {
         reason: err.to_string(),
     })?;
@@ -233,7 +223,7 @@ pub async fn edit_submit(
     Path(name): Path<String>,
     Form(form): Form<EditForm>,
 ) -> HtmlResult {
-    let client = state.require_client()?;
+    let url = state.require_connect_url()?;
     let parsed: Map<String, Value> =
         serde_json::from_str(&form.config_json).map_err(|err| Error::Json {
             reason: err.to_string(),
@@ -243,10 +233,10 @@ pub async fn edit_submit(
     let name_clone = name.clone();
     let config_json = form.config_json.clone();
 
-    let outcome = tokio::task::spawn_blocking(move || {
+    let outcome = with_connect_client(url, move |client| {
         let report = validate_config(parsed.clone(), Some(&name_clone), None)?;
         if !report.valid && !force {
-            return Ok::<_, Error>(EditOutcome::Invalid {
+            return Ok(EditOutcome::Invalid {
                 formatted: report.formatted,
                 config_json,
             });
@@ -254,10 +244,7 @@ pub async fn edit_submit(
         client.update_connector(&name_clone, &parsed)?;
         Ok(EditOutcome::Updated)
     })
-    .await
-    .map_err(|err| Error::Internal {
-        reason: err.to_string(),
-    })??;
+    .await?;
 
     match outcome {
         EditOutcome::Updated => Ok(redirect(&format!(
@@ -302,7 +289,7 @@ pub async fn create_submit(
     State(state): State<AppState>,
     Form(form): Form<CreateForm>,
 ) -> HtmlResult {
-    let client = state.require_client()?;
+    let url = state.require_connect_url()?;
     let value: Value = serde_json::from_str(&form.config_json).map_err(|err| Error::Json {
         reason: err.to_string(),
     })?;
@@ -310,11 +297,11 @@ pub async fn create_submit(
     let request = create_request_from_value(value).map_err(|reason| Error::Json { reason })?;
     let name = request.name.clone();
 
-    tokio::task::spawn_blocking(move || client.create_connector(&request))
-        .await
-        .map_err(|err| Error::Internal {
-            reason: err.to_string(),
-        })??;
+    with_connect_client(url, move |client| {
+        client.create_connector(&request)?;
+        Ok(())
+    })
+    .await?;
 
     Ok(redirect(&format!(
         "/control?flash=Created%20{name}&focus={name}"
@@ -345,8 +332,6 @@ fn create_request_from_value(value: Value) -> std::result::Result<CreateConnecto
 }
 
 fn urlencoding_encode(input: &str) -> String {
-    use std::fmt::Write as _;
-
     let mut out = String::new();
     for byte in input.bytes() {
         match byte {

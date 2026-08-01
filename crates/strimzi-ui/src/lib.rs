@@ -1,5 +1,6 @@
 //! Axum + HTMX web UI for Strimzi Ops.
 
+pub mod blocking;
 pub mod error;
 pub mod result;
 pub mod routes;

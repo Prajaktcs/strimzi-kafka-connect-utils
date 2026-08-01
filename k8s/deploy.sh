@@ -48,9 +48,21 @@ OPERATOR_YAML="$(mktemp)"
 curl -fsSL \
   "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" \
   -o "${OPERATOR_YAML}"
-# Official bundle defaults to namespace "myproject"; point it at our local namespace.
-sed "s/namespace: myproject/namespace: ${NAMESPACE}/g" "${OPERATOR_YAML}" | kubectl apply -f -
+# Official bundle defaults subject namespaces to "myproject" and leaves
+# Deployment/ServiceAccount/RoleBinding without metadata.namespace, so they
+# would otherwise install into the current kubectl context (often "default").
+sed "s/namespace: myproject/namespace: ${NAMESPACE}/g" "${OPERATOR_YAML}" \
+  | kubectl apply -f - -n "${NAMESPACE}"
 rm -f "${OPERATOR_YAML}"
+
+# Remove a leftover operator from older runs that landed in default/
+kubectl delete deploy,sa,cm,rolebinding -l app=strimzi -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete deploy strimzi-cluster-operator -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete sa,cm strimzi-cluster-operator -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete rolebinding -n default -l app=strimzi --ignore-not-found=true >/dev/null 2>&1 || true
+for rb in strimzi-cluster-operator strimzi-cluster-operator-watched strimzi-cluster-operator-leader-election strimzi-cluster-operator-entity-operator-delegation; do
+  kubectl delete rolebinding "${rb}" -n default --ignore-not-found=true >/dev/null 2>&1 || true
+done
 
 echo "Waiting for Strimzi operator to be ready..."
 kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n ${NAMESPACE} --timeout=300s

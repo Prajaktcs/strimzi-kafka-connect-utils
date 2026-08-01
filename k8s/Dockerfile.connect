@@ -1,5 +1,11 @@
-FROM quay.io/strimzi/kafka:0.50.0-kafka-4.1.1
+FROM quay.io/strimzi/kafka:1.1.0-kafka-4.3.0
 USER root:root
-RUN mkdir -p /opt/kafka/plugins/debezium && \
-    curl -f -L https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.4.0.Final/debezium-connector-postgres-3.4.0.Final-plugin.tar.gz | tar xz -C /opt/kafka/plugins/debezium --strip-components=1
+RUN mkdir -p /opt/kafka/plugins/debezium /opt/kafka/plugins/iceberg \
+    && curl -f -L https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.6.0.Final/debezium-connector-postgres-3.6.0.Final-plugin.tar.gz \
+      | tar xz -C /opt/kafka/plugins/debezium --strip-components=1 \
+    && curl -f -L -o /tmp/iceberg-kafka-connect.zip \
+      https://hub-downloads.confluent.io/api/plugins/iceberg/iceberg-kafka-connect/versions/1.9.2/iceberg-iceberg-kafka-connect-1.9.2.zip \
+    && python3 -c "import pathlib,zipfile; zf=zipfile.ZipFile('/tmp/iceberg-kafka-connect.zip'); zf.extractall('/tmp/iceberg-dist'); dest=pathlib.Path('/opt/kafka/plugins/iceberg'); \
+[p.rename(dest/p.name) for p in pathlib.Path('/tmp/iceberg-dist').rglob('*.jar')]" \
+    && rm -rf /tmp/iceberg-kafka-connect.zip /tmp/iceberg-dist
 USER 1001

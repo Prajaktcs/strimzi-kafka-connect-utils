@@ -46,6 +46,9 @@ secrets.toml
 *.env
 .env.local
 
+# Local one-command setup state (port-forward PIDs/logs)
+.local/
+
 # Docker
 garage_data/
 

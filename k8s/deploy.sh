@@ -2,7 +2,7 @@
 set -e
 
 NAMESPACE="kafka"
-STRIMZI_VERSION="0.50.0"
+STRIMZI_VERSION="1.1.0"
 
 echo "Deploying Strimzi Ops local development environment"
 echo "======================================================="
@@ -24,25 +24,55 @@ fi
 echo "Connected to Kubernetes cluster"
 echo ""
 
-# Check if Strimzi operator is installed
-if ! kubectl get crd kafkas.kafka.strimzi.io &> /dev/null; then
-    echo "Strimzi operator not found. Installing Strimzi ${STRIMZI_VERSION}..."
-    kubectl create namespace strimzi-system || true
-    kubectl create -f "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" -n strimzi-system
+# Create app namespace first (operator will be installed here for local single-ns watch)
+kubectl apply -f 00-namespace.yaml
 
-    echo "Waiting for Strimzi operator to be ready..."
-    kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n strimzi-system --timeout=300s
-    echo "Strimzi operator installed"
-else
-    echo "Strimzi operator already installed"
+# Strimzi 1.x dropped the v1beta2 API. Patching CRDs that still list v1beta2 in
+# status.storedVersions fails. For local dev, wipe legacy CRDs/operators first.
+if kubectl get crd kafkas.kafka.strimzi.io >/dev/null 2>&1; then
+  STORED_VERSIONS="$(kubectl get crd kafkas.kafka.strimzi.io -o jsonpath='{.status.storedVersions[*]}' 2>/dev/null || true)"
+  if [[ "${STORED_VERSIONS}" == *v1beta2* ]]; then
+    echo "Detected legacy Strimzi CRDs (storedVersions includes v1beta2)."
+    echo "Resetting Strimzi CRDs for a clean ${STRIMZI_VERSION} install..."
+    # Drop CRs first so CRD deletion is not blocked.
+    kubectl delete kafka,kafkanodepool,kafkaconnect,kafkaconnector --all -A --wait=false 2>/dev/null || true
+    kubectl get crd -o name | grep -E '\.(kafka|core)\.strimzi\.io$' | xargs kubectl delete --wait=true
+    kubectl delete namespace strimzi-system --wait=false 2>/dev/null || true
+    echo "Legacy Strimzi CRDs removed."
+  fi
 fi
+
+# Install or upgrade Strimzi operator to the pinned version (watches the kafka namespace)
+echo "Installing/upgrading Strimzi operator ${STRIMZI_VERSION} into ${NAMESPACE}..."
+OPERATOR_YAML="$(mktemp)"
+curl -fsSL \
+  "https://github.com/strimzi/strimzi-kafka-operator/releases/download/${STRIMZI_VERSION}/strimzi-cluster-operator-${STRIMZI_VERSION}.yaml" \
+  -o "${OPERATOR_YAML}"
+# Official bundle defaults subject namespaces to "myproject" and leaves
+# Deployment/ServiceAccount/RoleBinding without metadata.namespace, so they
+# would otherwise install into the current kubectl context (often "default").
+sed "s/namespace: myproject/namespace: ${NAMESPACE}/g" "${OPERATOR_YAML}" \
+  | kubectl apply -f - -n "${NAMESPACE}"
+rm -f "${OPERATOR_YAML}"
+
+# Remove a leftover operator from older runs that landed in default/
+kubectl delete deploy,sa,cm,rolebinding -l app=strimzi -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete deploy strimzi-cluster-operator -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete sa,cm strimzi-cluster-operator -n default --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete rolebinding -n default -l app=strimzi --ignore-not-found=true >/dev/null 2>&1 || true
+for rb in strimzi-cluster-operator strimzi-cluster-operator-watched strimzi-cluster-operator-leader-election strimzi-cluster-operator-entity-operator-delegation; do
+  kubectl delete rolebinding "${rb}" -n default --ignore-not-found=true >/dev/null 2>&1 || true
+done
+
+echo "Waiting for Strimzi operator to be ready..."
+kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n ${NAMESPACE} --timeout=300s
+echo "Strimzi operator ${STRIMZI_VERSION} is ready"
 echo ""
 
 # Apply manifests
 echo "Applying Kubernetes manifests..."
 
-# Create namespace
-kubectl apply -f 00-namespace.yaml
+# Namespace already applied above
 
 # Deploy PostgreSQL
 echo "  - PostgreSQL database"
@@ -53,41 +83,23 @@ echo "Waiting for PostgreSQL to be ready..."
 kubectl wait --for=condition=ready pod -l app=postgres -n ${NAMESPACE} --timeout=300s
 echo "PostgreSQL is ready"
 
-# Deploy Garage S3
+# Deploy Garage S3 (v2.3 single-node auto-bootstrap with fixed local-dev keys)
 echo "  - Garage S3"
 kubectl apply -f 04-garage.yaml
 
 # Wait for Garage to be ready
 echo "Waiting for Garage to be ready..."
 kubectl wait --for=condition=ready pod -l app=garage -n ${NAMESPACE} --timeout=300s
-echo "Garage is ready"
+echo "Garage is ready (bucket=warehouse, keys are fixed local-dev values in 04-garage.yaml)"
 
-# Run Garage Setup
-echo "  - Garage Setup Job"
-kubectl delete job garage-setup -n ${NAMESPACE} 2>/dev/null || true
-kubectl apply -f 04-garage-setup.yaml
-echo "Waiting for Garage Setup to complete..."
-kubectl wait --for=condition=complete job/garage-setup -n ${NAMESPACE} --timeout=120s
-echo "Garage Setup complete"
-# Retrieve S3 Keys from Job logs and store them in a Kubernetes Secret
-echo "Retrieving S3 credentials from Garage Setup logs..."
-POD_NAME=$(kubectl get pods -n ${NAMESPACE} -l job-name=garage-setup -o jsonpath='{.items[0].metadata.name}')
-CREDS_LOG=$(kubectl logs "$POD_NAME" -n "${NAMESPACE}" || true)
-ACCESS_KEY_ID=$(printf '%s\n' "$CREDS_LOG" | awk -F': ' '/Key ID/{print $2; exit}')
-SECRET_KEY=$(printf '%s\n' "$CREDS_LOG" | awk -F': ' '/Secret Key/{print $2; exit}')
-if [ -n "$ACCESS_KEY_ID" ] && [ -n "$SECRET_KEY" ]; then
-    # Store credentials in a Kubernetes Secret instead of printing them
-    kubectl delete secret garage-s3-credentials -n "${NAMESPACE}" 2>/dev/null || true
-    kubectl create secret generic garage-s3-credentials \
-        -n "${NAMESPACE}" \
-        --from-literal=accessKeyId="$ACCESS_KEY_ID" \
-        --from-literal=secretKey="$SECRET_KEY"
-    echo "S3 credentials stored in Kubernetes secret 'garage-s3-credentials' in namespace '${NAMESPACE}'."
-else
-    echo "Warning: Unable to parse S3 credentials from garage-setup job logs."
-fi
+# Store the same local-dev credentials in a Kubernetes Secret for in-cluster consumers
+kubectl delete secret garage-s3-credentials -n "${NAMESPACE}" 2>/dev/null || true
+kubectl create secret generic garage-s3-credentials \
+    -n "${NAMESPACE}" \
+    --from-literal=accessKeyId="GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    --from-literal=secretKey="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+echo "S3 credentials stored in Kubernetes secret 'garage-s3-credentials' in namespace '${NAMESPACE}'."
 
-# Deploy Nessie Catalog
 # Deploy Nessie Catalog
 echo "  - Nessie Iceberg Catalog"
 kubectl apply -f 05-iceberg-catalog.yaml
@@ -138,7 +150,8 @@ echo ""
 echo "5. Nessie Catalog API:"
 echo "   kubectl port-forward svc/nessie 19120:19120 -n ${NAMESPACE}"
 echo ""
-echo "Then configure secrets.toml with the credentials retrieved above."
+echo "Then run: just sync-secrets  (or use just setup which does this automatically)"
+echo "In-cluster S3 credentials are in secret/garage-s3-credentials."
 echo ""
 echo "Monitor deployment status:"
 echo "kubectl get pods -n ${NAMESPACE}"

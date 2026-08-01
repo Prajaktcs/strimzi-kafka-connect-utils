@@ -1,0 +1,26 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaConnector
+metadata:
+  name: iceberg-sink-connector
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: my-connect-cluster
+spec:
+  class: org.apache.iceberg.connect.IcebergSinkConnector
+  tasksMax: 1
+  config:
+    topics: lakehouse.public.users
+    iceberg.catalog.type: hadoop
+    iceberg.catalog.warehouse: s3a://warehouse/iceberg
+    iceberg.catalog.s3.endpoint: http://garage:3900
+    iceberg.catalog.s3.access-key-id: GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    iceberg.catalog.s3.secret-access-key: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+    iceberg.catalog.s3.path-style-access: "true"
+    iceberg.tables.auto-create-enabled: "true"
+    iceberg.tables.evolve-schema-enabled: "true"
+    iceberg.tables.commit-interval-ms: "60000"
+    iceberg.tables.commit-timeout-ms: "120000"
+    key.converter: org.apache.kafka.connect.json.JsonConverter
+    value.converter: org.apache.kafka.connect.json.JsonConverter
+    key.converter.schemas.enable: "false"
+    value.converter.schemas.enable: "false"

@@ -7,20 +7,21 @@ data:
   garage.toml: |
     metadata_dir = "/var/lib/garage/meta"
     data_dir = "/var/lib/garage/data"
+    db_engine = "sqlite"
     replication_factor = 1
-    consistency_mode = "consistent"
     rpc_bind_addr = "[::]:3901"
+    rpc_public_addr = "garage:3901"
     rpc_secret = "5c52402170364952097441656c3821034c442340356536565c40445d4444535d"
 
     [s3_api]
-    s3_region = "us-east-1"
+    s3_region = "garage"
     api_bind_addr = "[::]:3900"
     root_domain = ".s3.local"
 
     [s3_web]
     bind_addr = "[::]:3902"
     root_domain = ".web.local"
-    enabled = true
+    index = "index.html"
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -40,7 +41,8 @@ spec:
     spec:
       containers:
         - name: garage
-          image: dxflrs/garage:v2.1.0
+          image: dxflrs/garage:v2.3.0
+          command: ["/garage", "server", "--single-node", "--default-bucket"]
           ports:
             - containerPort: 3900
               name: s3
@@ -57,6 +59,18 @@ spec:
           env:
             - name: RUST_LOG
               value: info
+            # Fixed local-dev credentials (not for production)
+            - name: GARAGE_DEFAULT_ACCESS_KEY
+              value: "GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            - name: GARAGE_DEFAULT_SECRET_KEY
+              value: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            - name: GARAGE_DEFAULT_BUCKET
+              value: "warehouse"
+          readinessProbe:
+            tcpSocket:
+              port: 3900
+            initialDelaySeconds: 5
+            periodSeconds: 5
       volumes:
         - name: config
           configMap:

@@ -37,8 +37,28 @@ if "config" not in st.session_state:
 st.title("🔌 Strimzi Ops Platform")
 st.markdown("Monitor and Control your Kafka Connect deployments")
 
-# Sidebar navigation
-page = st.sidebar.selectbox("Navigation", ["Dashboard", "Monitor", "Control"])
+PAGES = ["Dashboard", "Monitor", "Control"]
+if "page" not in st.session_state:
+    st.session_state.page = "Dashboard"
+
+
+def navigate(to: str, **state) -> None:
+    """Switch sidebar page and optionally stash related session state."""
+    st.session_state.page = to
+    for key, value in state.items():
+        st.session_state[key] = value
+    st.rerun()
+
+
+# Sidebar navigation (session-state driven so Dashboard can deep-link)
+selection = st.sidebar.radio(
+    "Navigation",
+    PAGES,
+    index=PAGES.index(st.session_state.page),
+)
+if selection != st.session_state.page:
+    st.session_state.page = selection
+page = st.session_state.page
 
 # Dashboard Page
 if page == "Dashboard":
@@ -117,7 +137,10 @@ if page == "Dashboard":
 
             with col1:
                 st.subheader("Connector Status Distribution")
+                st.caption("Snapshot and CDC progress live on Monitor.")
                 st.bar_chart({"Count": status_distribution})
+                if st.button("Open Monitor →", key="dash_to_monitor", use_container_width=True):
+                    navigate("Monitor")
 
             with col2:
                 st.subheader("Failed Connectors/Tasks")
@@ -148,26 +171,33 @@ if page == "Dashboard":
 
                 if issues:
                     st.table(issues)
+                    if st.button("Manage failed connectors →", key="dash_failed_to_control"):
+                        first = issues[0]["Name"].split(" (Task")[0]
+                        navigate("Control", focus_connector=first)
                 else:
                     st.success("✅ No failures detected")
 
             st.divider()
             st.subheader("All Connectors Summary")
-            all_connectors = []
+            st.caption("Open a connector to manage it on the Control page.")
+            header = st.columns([3, 1, 1, 1, 1])
+            header[0].markdown("**Name**")
+            header[1].markdown("**Type**")
+            header[2].markdown("**Status**")
+            header[3].markdown("**Tasks**")
+            header[4].markdown("**Actions**")
+
             for name, info in all_info.items():
                 status = info.get("status", {})
-                all_connectors.append(
-                    {
-                        "Name": name,
-                        "Type": info.get("info", {}).get("type", "unknown"),
-                        "Status": status.get("connector", {}).get("state", "UNKNOWN"),
-                        "Tasks (R/T)": (
-                            f"{sum(1 for t in status.get('tasks', []) if t.get('state') == 'RUNNING')}"
-                            f"/{len(status.get('tasks', []))}"
-                        ),
-                    }
-                )
-            st.dataframe(all_connectors, use_container_width=True)
+                tasks = status.get("tasks", [])
+                running = sum(1 for t in tasks if t.get("state") == "RUNNING")
+                row = st.columns([3, 1, 1, 1, 1])
+                row[0].write(name)
+                row[1].write(info.get("info", {}).get("type", "unknown"))
+                row[2].write(status.get("connector", {}).get("state", "UNKNOWN"))
+                row[3].write(f"{running}/{len(tasks)}")
+                if row[4].button("Manage →", key=f"dash_manage_{name}"):
+                    navigate("Control", focus_connector=name)
 
         else:
             st.info("No connectors found")
@@ -291,6 +321,15 @@ elif page == "Control":
         all_info = st.session_state.controller.get_all_connectors_status()
 
         if all_info:
+            focus = st.session_state.pop("focus_connector", None)
+            if focus and focus in all_info:
+                st.info(f"Focused from Dashboard: **{focus}**")
+                # Show focused connector first
+                all_info = {
+                    focus: all_info[focus],
+                    **{k: v for k, v in all_info.items() if k != focus},
+                }
+
             # Table Header
             header_cols = st.columns([2, 1, 1, 4])
             header_cols[0].markdown("**Connector Name**")

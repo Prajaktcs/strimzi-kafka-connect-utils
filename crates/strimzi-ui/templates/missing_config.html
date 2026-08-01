@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Configuration required — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Configuration required</h2>
+<p>To use Dashboard and Control, provide Kafka Connect settings.</p>
+<pre>[kafka]
+bootstrap_servers = "localhost:9092"
+connect_url = "http://localhost:8083"
+connect_cluster_name = "my-connect-cluster"</pre>
+<p>Save as <code>secrets.toml</code>, or pass <code>--connect-url</code> / <code>--secrets</code> to <code>strimzi-ui</code>.</p>
+{% endblock %}

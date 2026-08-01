@@ -280,19 +280,21 @@ Manage your connectors:
 }
 ```
 
-## Rust CLI (migration in progress)
+## Rust CLI and UI (migration in progress)
 
 Python → Rust migration steps:
 
 1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
-2. **Current:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
-3. **Planned:** UI replacement
+2. **Done:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
+3a. **Current:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Monitor is a placeholder
+3b. **Planned:** live Monitor + kubectl logs; switch `just run` / setup off Streamlit
 
 Cargo workspace:
 
-- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor
+- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor, shared settings
 - `strimzi-ops` — primary CLI (`lint`, `connectors`, `cluster`, `snapshot`, `monitor`)
 - `strimzi-lint` — compatibility binary that only exposes `lint`
+- `strimzi-ui` — web UI for Dashboard and Control (Askama + HTMX)
 
 ```bash
 cargo run -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
@@ -303,6 +305,10 @@ just lint-config-rust examples/debezium-postgres-connector.yaml
 cargo run -p strimzi-ops -- --connect-url http://localhost:8083 connectors list
 cargo run -p strimzi-ops -- --connect-url http://localhost:8083 --bootstrap-servers localhost:9092 \
   snapshot trigger my-connector --type incremental
+
+# Rust web UI (needs secrets.toml or --connect-url; default port 8501)
+just ui
+# Streamlit remains: just run
 ```
 
 Kafka-backed commands need **librdkafka** (`brew install librdkafka cmake pkg-config` on macOS).
@@ -313,11 +319,12 @@ Rust code follows [Canonical Rust best practices](https://canonical.github.io/ru
 
 ```
 strimzi-ops/
-├── Cargo.toml                      # Rust workspace (core + CLI)
+├── Cargo.toml                      # Rust workspace (core + CLI + UI)
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
-│   ├── strimzi-ops-core/           # lint, connect, control, monitor
-│   └── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
-├── app.py                          # Streamlit application (Monitor & Control UI)
+│   ├── strimzi-ops-core/           # lint, connect, control, monitor, settings
+│   ├── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
+│   └── strimzi-ui/                 # Axum Dashboard/Control UI
+├── app.py                          # Streamlit application (still default for just run)
 ├── pyproject.toml                  # Project config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)
 ├── secrets.toml.example            # Configuration template

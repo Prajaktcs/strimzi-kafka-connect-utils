@@ -11,6 +11,12 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    #[error("cannot serialise JSON output: {reason}")]
-    JsonOutput { reason: String },
+    #[error("cannot parse JSON: {reason}")]
+    Json { reason: String },
+
+    #[error("configuration is required; set --connect-url or kafka.connect_url in secrets.toml")]
+    ConfigRequired,
+
+    #[error("internal error: {reason}")]
+    Internal { reason: String },
 }

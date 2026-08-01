@@ -155,8 +155,13 @@ port-forward-nessie:
 
 # Start Streamlit UI (assumes setup / port-forward-all already ran)
 run:
-    @echo "Starting Strimzi Ops Platform..."
+    @echo "Starting Strimzi Ops Platform (Streamlit)..."
     uv run streamlit run app.py
+
+# Start Rust Axum UI (Dashboard + Control). Conflicts with Streamlit on :8501.
+ui port="8501":
+    @echo "Starting strimzi-ui on http://127.0.0.1:{{ port }} ..."
+    cargo run -q -p strimzi-ui -- --port {{ port }}
 
 # Lint a connector config file (Python CLI)
 lint-config file:

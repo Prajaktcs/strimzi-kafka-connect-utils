@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ name }}{% endblock %}
+{% block content %}
+<h2>Edit Configuration: {{ name }}</h2>
+{% if let Some(msg) = flash %}
+<div class="flash">{{ msg }}</div>
+{% endif %}
+{% if let Some(err) = validation_error %}
+<div class="error">
+  <p>Configuration is invalid:</p>
+  <pre>{{ err }}</pre>
+</div>
+{% endif %}
+<form method="post" action="/control/{{ name }}/edit" class="stack">
+  <label>JSON configuration
+    <textarea name="config_json" rows="20">{{ config_json }}</textarea>
+  </label>
+  <div class="row">
+    <button type="submit">Update</button>
+    {% if validation_error.is_some() %}
+    <button type="submit" name="force" value="1">Update anyway</button>
+    {% endif %}
+    <a class="button secondary" href="/control?focus={{ name }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

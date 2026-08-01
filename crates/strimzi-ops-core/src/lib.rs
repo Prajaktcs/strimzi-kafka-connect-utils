@@ -6,6 +6,7 @@ pub mod linter;
 pub mod monitor;
 pub mod parse;
 pub mod schema;
+pub mod settings;
 pub mod validate;
 
 use std::io;
@@ -49,6 +50,12 @@ pub enum Error {
 
     #[error("monitor not started; call start() first")]
     MonitorNotStarted,
+
+    #[error("cannot load secrets from {path}: {reason}")]
+    Secrets { path: PathBuf, reason: String },
+
+    #[error("missing connection setting: {option}")]
+    MissingSetting { option: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -58,4 +65,5 @@ pub use control::{to_strimzi_yaml, SnapshotResult, SnapshotTrigger};
 pub use linter::{ConnectorLinter, LintResult, LinterConfig, Severity, Summary};
 pub use monitor::{NotificationMonitor, SnapshotState, SnapshotTracker};
 pub use parse::{parse_config_text, ConfigFormat};
+pub use settings::{load_settings, ConnectionSettings};
 pub use validate::{validate_config, validate_text, ValidationReport};

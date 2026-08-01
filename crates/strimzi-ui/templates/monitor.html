@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Monitor — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Real-time Snapshot Monitoring</h2>
+<p class="lede">Track Debezium snapshot progress via notification events</p>
+<div class="notice">
+  <p>Live Monitor (Kafka consumer / streaming updates) is coming in a follow-up UI release.</p>
+  <p>Until then, use the Python Streamlit UI (<code>just run</code>) or the CLI:</p>
+  <pre>cargo run -p strimzi-ops -- monitor --bootstrap-servers localhost:9092</pre>
+</div>
+{% endblock %}

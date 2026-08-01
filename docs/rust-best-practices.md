@@ -34,8 +34,8 @@ just rust-test
   re-exports (no logic in `mod.rs`).
 - Library crate (`strimzi-ops-core`): define `Error` and `Result` in `lib.rs`
   immediately after `mod` / `use` declarations.
-- Binary crate (`strimzi-ops`): define `Error` in `error.rs` and `Result` in
-  `result.rs` (shared lib used by `strimzi-ops` and `strimzi-lint` bins).
+- Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and
+  `Result` in `result.rs`.
 
 ## Error and panic discipline
 
@@ -57,18 +57,23 @@ just rust-test
 
 ```
 Cargo.toml                 # workspace root
-crates/strimzi-ops-core/   # library: lint, Connect client, control, monitor
+crates/strimzi-ops-core/   # library: lint, Connect client, control, monitor, settings
 crates/strimzi-ops/        # binaries: `strimzi-ops` (full CLI) + `strimzi-lint` (compat)
+crates/strimzi-ui/         # Axum + Askama + HTMX Dashboard/Control UI
 ```
 
 Library modules use directory `mod.rs` files. Kafka producer/consumer code is behind the
-`kafka` feature on `strimzi-ops-core` (enabled by the CLI). Building with Kafka requires
+`kafka` feature on `strimzi-ops-core` (enabled by the CLI and UI). Building with Kafka requires
 **librdkafka** (Homebrew: `brew install librdkafka cmake pkg-config`).
+
+Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and `Result` in
+`result.rs`.
 
 ## Migration plan (agents)
 
 1. Core + lint CLI — done
-2. Connect client / monitor / control as library + CLI — current
-3. UI last — durable stack preferred; RustView only for disposable prototypes
+2. Connect client / monitor / control as library + CLI — done
+3a. Axum + HTMX Dashboard + Control (`strimzi-ui`) — current
+3b. Live Monitor + logs; make Rust UI the default — later
 
-Python remains the UI until step 3.
+Python Streamlit remains available via `just run` until 3b.

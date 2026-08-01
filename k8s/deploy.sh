@@ -92,6 +92,14 @@ echo "Waiting for Garage to be ready..."
 kubectl wait --for=condition=ready pod -l app=garage -n ${NAMESPACE} --timeout=300s
 echo "Garage is ready (bucket=warehouse, keys are fixed local-dev values in 04-garage.yaml)"
 
+# Store the same local-dev credentials in a Kubernetes Secret for in-cluster consumers
+kubectl delete secret garage-s3-credentials -n "${NAMESPACE}" 2>/dev/null || true
+kubectl create secret generic garage-s3-credentials \
+    -n "${NAMESPACE}" \
+    --from-literal=accessKeyId="GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
+    --from-literal=secretKey="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+echo "S3 credentials stored in Kubernetes secret 'garage-s3-credentials' in namespace '${NAMESPACE}'."
+
 # Deploy Nessie Catalog
 echo "  - Nessie Iceberg Catalog"
 kubectl apply -f 05-iceberg-catalog.yaml
@@ -142,7 +150,8 @@ echo ""
 echo "5. Nessie Catalog API:"
 echo "   kubectl port-forward svc/nessie 19120:19120 -n ${NAMESPACE}"
 echo ""
-echo "Then configure secrets.toml with the credentials retrieved above."
+echo "Then run: just sync-secrets  (or use just setup which does this automatically)"
+echo "In-cluster S3 credentials are in secret/garage-s3-credentials."
 echo ""
 echo "Monitor deployment status:"
 echo "kubectl get pods -n ${NAMESPACE}"

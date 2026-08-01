@@ -293,7 +293,7 @@ cargo run -p strimzi-lint -- lint examples/debezium-postgres-connector.yaml
 just lint-config-rust examples/debezium-postgres-connector.yaml
 ```
 
-Rust code follows [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html); see [docs/rust-best-practices.md](docs/rust-best-practices.md).
+Rust code follows [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html); see [docs/rust-best-practices.md](docs/rust-best-practices.md) and [AGENTS.md](AGENTS.md). Cursor loads `.cursor/rules/` automatically in future sessions.
 
 ## Project Structure
 

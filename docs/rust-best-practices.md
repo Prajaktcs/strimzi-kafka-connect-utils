@@ -5,8 +5,11 @@ This repository's Rust code follows **Canonical's Rust best practices**:
 - Book: <https://canonical.github.io/rust-best-practices/introduction.html>
 - Source: <https://github.com/canonical/rust-best-practices>
 
-Treat that guide as the style baseline for all new Rust in this project. The
-points below map the guide to how we structure Strimzi Ops.
+Treat that guide as the style baseline for all new Rust in this project.
+
+**Cursor / agents:** also see [AGENTS.md](../AGENTS.md) and `.cursor/rules/`
+(`project.mdc`, `rust-canonical.mdc`) so future sessions load these instructions
+automatically.
 
 ## Preconditions
 
@@ -58,5 +61,10 @@ crates/strimzi-ops-core/   # library: lint rules, schema validation, parsing
 crates/strimzi-lint/       # binary: CLI parity with Python `strimzi-lint`
 ```
 
-Python remains the UI and remaining ops surface for now; this Rust path covers
-**step 1** of the migration (`core` + `lint` CLI).
+## Migration plan (agents)
+
+1. Core + lint CLI (current)
+2. Connect client / monitor / control as library + CLI
+3. UI last — durable stack preferred; RustView only for disposable prototypes
+
+Python remains the UI and remaining ops surface until each area is replaced.

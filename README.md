@@ -24,7 +24,7 @@ This is the recommended setup for actual use:
 - **Strimzi Operator**: 1.1.0
 - **Kafka**: 4.3.0 (Managed by Strimzi operator, KRaft)
 - **Kafka Connect**: Deployed via Strimzi KafkaConnect CRD with Debezium 3.6.0
-- **Strimzi Ops**: Python 3.14+ application that connects remotely via:
+- **Strimzi Ops**: Rust CLI + web UI that connect remotely via:
   - Kafka Connect REST API (port 8083)
   - Kafka Bootstrap Servers (port 9092)
 
@@ -51,7 +51,7 @@ This is the recommended setup for actual use:
 │                                         │
 │  ┌──────────────────────────────────┐  │
 │  │  Strimzi Ops                     │  │
-│  │  - Linter CLI (Python/Rust)      │  │
+│  │  - Linter / ops CLI (Rust)       │  │
 │  │  - Web UI (strimzi-ui / Axum)    │  │
 │  └──────────────────────────────────┘  │
 └─────────────────────────────────────────┘
@@ -66,46 +66,24 @@ For testing locally, use the provided Kubernetes manifests:
 - **Database**: PostgreSQL 18.4 with CDC enabled
 - **Kafka Connect**: With Debezium 3.6.0 (PostgreSQL connector)
 - **Object Storage / Catalog**: Garage 2.3.0 + Nessie 0.108.4
-- **App Logic**: Rust (`strimzi-ops` / `strimzi-ui`) + Python helpers during migration
+- **App Logic**: Rust (`strimzi-ops` / `strimzi-ui`)
 
 See the "Local Development Environment" section below for details.
 
 ## Prerequisites
 
-- Docker and Docker Compose
-- Python 3.14 or higher
-- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+- Rust toolchain (stable) with Cargo
+- [just](https://github.com/casey/just) — command runner (`brew install just`)
+- Docker and kubectl (Colima recommended for local k8s)
+- librdkafka (for Kafka features): `brew install librdkafka cmake pkg-config`
 - Git
-
-### Installing UV
-
-UV is a modern, fast Python package manager created by Astral (makers of Ruff). It offers:
-
-- 10-100x faster than pip
-- Automatic virtual environment management
-- Lockfile support for reproducible builds
-- Drop-in replacement for pip, pip-tools, and virtualenv
-
-Install it with:
-
-```bash
-# macOS/Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Or via pip
-pip install uv
-
-# Or via Homebrew
-brew install uv
-```
 
 ## Quick Start
 
 ### Prerequisites
 
-- Python 3.12 or higher
-- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
-- [just](https://github.com/casey/just) - Command runner (`brew install just`)
+- Rust / Cargo
+- [just](https://github.com/casey/just) (`brew install just`)
 - Kubernetes cluster with kubectl configured (Colima, Minikube, kind, or existing cluster)
 - Access to a Kubernetes cluster with Strimzi Kafka Connect deployed (or use local dev setup)
 
@@ -131,23 +109,24 @@ First run can take 5–10 minutes. Tear down with `just destroy`.
 If you already have Kafka Connect running on Kubernetes:
 
 ```bash
-# 1. Clone and install
+# 1. Clone the repository
 git clone <repository-url>
 cd strimzi-ops
-just install
 
-# 2. Port forward to your cluster
-kubectl port-forward svc/your-connect-api 8083:8083 -n your-namespace
-kubectl port-forward svc/your-kafka-bootstrap 9092:9092 -n your-namespace
+# 2. Port forward to your cluster (or use just port-forward-all for local stack)
+kubectl port-forward --address 127.0.0.1 svc/your-connect-api 8083:8083 -n your-namespace
+kubectl port-forward --address 127.0.0.1 svc/your-kafka-bootstrap 9092:9092 -n your-namespace
 
 # 3. Configure connection
 cp secrets.toml.example secrets.toml
 # Edit with your cluster details
 
 # 4. Start using the tools
-just run  # Start UI
-just lint-config examples/debezium-postgres-connector.yaml  # Lint configs
+cargo run -q -p strimzi-ui -- --port 8501
+just lint-config examples/debezium-postgres-connector.yaml
 ```
+
+(`just ui` also starts local-stack port-forwards; use `cargo run -p strimzi-ui` when pointing at an existing remote Connect.)
 
 ### Available Just Recipes
 
@@ -177,16 +156,16 @@ Validate your connector configurations before deploying them using the command-l
 just lint-config examples/debezium-postgres-connector.yaml
 
 # Direct CLI usage
-uv run strimzi-lint lint examples/debezium-postgres-connector.yaml
+cargo run -q -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
 
 # With custom linter config
-uv run strimzi-lint lint -c .lintrc.toml connector.yaml
+cargo run -q -p strimzi-ops --bin strimzi-lint -- lint -c .lintrc.toml connector.yaml
 
 # JSON output (useful for CI/CD)
-uv run strimzi-lint lint --json connector.yaml
+cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --json connector.yaml
 
 # Strict mode (warnings cause failure)
-uv run strimzi-lint lint --strict connector.yaml
+cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connector.yaml
 ```
 
 **Features:**
@@ -284,33 +263,26 @@ Manage your connectors:
 }
 ```
 
-## Rust CLI and UI (migration in progress)
+## Rust CLI and UI
 
-Python → Rust migration steps:
+Cargo workspace (application is Rust-only):
 
-1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
-2. **Done:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
-3a. **Done:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed
-3b. **Done:** timed Monitor + kubectl logs in the Rust UI
-
-Cargo workspace:
-
-- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor, shared settings
+- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor, k8s helpers, shared settings
 - `strimzi-ops` — primary CLI (`lint`, `connectors`, `cluster`, `snapshot`, `monitor`)
 - `strimzi-lint` — compatibility binary that only exposes `lint`
-- `strimzi-ui` — web UI for Dashboard and Control (Askama + HTMX)
+- `strimzi-ui` — web UI for Dashboard, Control, timed Monitor, and kubectl logs (Askama + HTMX)
 
 ```bash
 cargo run -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
 # or
-just lint-config-rust examples/debezium-postgres-connector.yaml
+just lint-config examples/debezium-postgres-connector.yaml
 
 # Control examples (port-forward Connect first)
-cargo run -p strimzi-ops -- --connect-url http://localhost:8083 connectors list
-cargo run -p strimzi-ops -- --connect-url http://localhost:8083 --bootstrap-servers localhost:9092 \
+cargo run -p strimzi-ops -- --connect-url http://127.0.0.1:8083 connectors list
+cargo run -p strimzi-ops -- --connect-url http://127.0.0.1:8083 --bootstrap-servers 127.0.0.1:9092 \
   snapshot trigger my-connector --type incremental
 
-# Web UI (needs secrets.toml or --connect-url; default port 8501)
+# Web UI (ensures port-forwards; default port 8501)
 just run
 # or
 just ui
@@ -328,8 +300,7 @@ strimzi-ops/
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
 │   ├── strimzi-ops-core/           # lint, connect, control, monitor, k8s, settings
 │   ├── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
-│   └── strimzi-ui/                 # Axum Dashboard/Control UI (just run)
-├── pyproject.toml                  # Python package config & dependencies (uv)
+│   └── strimzi-ui/                 # Axum Dashboard/Control/Monitor UI (just run)
 ├── secrets.toml                    # Configuration file (gitignored)
 ├── secrets.toml.example            # Configuration template
 ├── justfile                        # Development commands (just)
@@ -349,17 +320,9 @@ strimzi-ops/
 │   ├── iceberg-sink-connector.yaml
 │   ├── legacy-connector-with-exemptions.yaml
 │   └── README.md
-├── .github/
-│   └── workflows/
-│       └── lint-connectors.yml.example  # CI/CD example
-└── strimzi_ops/                    # Python package
-    ├── __init__.py
-    ├── config.py                  # Configuration management
-    ├── linter.py                  # Linting engine
-    ├── validator.py               # Validation wrapper
-    ├── monitor.py                 # Real-time monitoring
-    ├── control.py                 # Connector control operations
-    └── cli.py                     # Command-line interface
+└── .github/
+    └── workflows/
+        └── lint-connectors.yml.example  # CI/CD example
 ```
 
 ## CI/CD Integration
@@ -371,37 +334,31 @@ The linter can be integrated into your CI/CD pipeline to validate connector conf
 See `.github/workflows/lint-connectors.yml.example` for a complete example. Basic usage:
 
 ```yaml
-- name: Install uv
-  uses: astral-sh/setup-uv@v1
-
-- name: Install dependencies
-  run: uv sync
+- name: Install Rust
+  uses: dtolnay/rust-toolchain@stable
 
 - name: Lint connectors
-  run: uv run strimzi-lint lint --strict connectors/my-connector.yaml
+  run: cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connectors/my-connector.yaml
 ```
 
 ### GitLab CI
 
 ```yaml
 lint-connectors:
-  image: python:3.12
-  before_script:
-    - pip install uv
-    - uv sync
+  image: rust:1.85
   script:
-    - uv run strimzi-lint lint --strict connectors/*.yaml
+    - cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connectors/*.yaml
 ```
 
 ### Pre-commit Hook
 
-Add to `.git/hooks/pre-commit`:
+Add to `.git/hooks/pre-commit` (or use the repo `.pre-commit-config.yaml`):
 
 ```bash
 #!/bin/bash
 for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(yaml|yml|json)$'); do
   if [[ $file == connectors/* ]]; then
-    uv run strimzi-lint lint "$file" || exit 1
+    cargo run -q -p strimzi-ops --bin strimzi-lint -- lint "$file" || exit 1
   fi
 done
 ```
@@ -439,13 +396,12 @@ just deploy
 `just setup` will:
 
 1. Start Colima with Kubernetes if no cluster is reachable
-2. Install Python deps with uv
-3. Build the local Connect image (`my-connect-cluster:0.0.2`)
-4. Deploy Strimzi, PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
-5. Write `secrets.toml` with Garage credentials from the setup job
-6. Apply the sample Postgres source connector
-7. Start port-forwards in the background
-8. Launch the Rust web UI (`strimzi-ui`)
+2. Build the local Connect image (`my-connect-cluster:0.0.3`)
+3. Deploy Strimzi, PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
+4. Write `secrets.toml` with Garage credentials from the setup job
+5. Apply the sample Postgres source + Iceberg sink connectors
+6. Start port-forwards in the background (IPv4 / `127.0.0.1`)
+7. Launch the Rust web UI (`strimzi-ui`)
 
 The first run takes 5–10 minutes.
 
@@ -514,59 +470,19 @@ This removes all resources but keeps the Strimzi operator installed for faster f
 
 ## Development
 
-All development commands use `uv` for dependency management and execution.
-
-### Install Development Dependencies
-
-```bash
-# Sync all dependencies including dev dependencies
-uv sync
-
-# Or using Make
-just install
-```
-
 ### Running Tests
 
 ```bash
-# Using uv
-uv run pytest tests/ -v
-
-# Or using Make
+just rust-test
+# or
 just test
 ```
 
-### Code Formatting
+### Format and lint (Canonical)
 
 ```bash
-# Format code with black
-uv run black strimzi_ops/
-
-# Or using Make
-just format
-```
-
-### Code Linting
-
-```bash
-# Lint with ruff
-uv run ruff check strimzi_ops/
-
-# Or using Make
-just lint
-```
-
-### Run All Checks
-
-```bash
-# Run format and lint checks
-just check
-```
-
-### Type Checking
-
-```bash
-uv run mypy strimzi_ops/
+just rust-fmt
+just rust-check   # also aliased as just lint / just check
 ```
 
 ## Troubleshooting
@@ -592,7 +508,7 @@ docker exec -it garage /garage bucket allow warehouse --read --write --key lakeh
 
 ### Configuration Validation Errors
 
-Ensure your connector configuration matches the Pydantic models in `strimzi_ops/validator.py`. Common issues:
+Ensure your connector configuration matches the schema validated by `strimzi-ops-core` / `strimzi-lint`. Common issues:
 
 - Missing required fields
 - Incorrect data types

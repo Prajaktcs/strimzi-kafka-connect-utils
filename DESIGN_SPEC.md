@@ -6,8 +6,8 @@
 **Goal:** A unified platform to validate, monitor, and control a Debezium-based Data Strimzi.
 **Core Features:**
 
-- **Validator:** Static analysis of connector configs (Pydantic).
-- **Monitor:** Real-time snapshot tracking via Debezium Notifications.
+- **Validator:** Static analysis of connector configs (`strimzi-ops-core` / `strimzi-lint`).
+- **Monitor:** Snapshot tracking via Debezium Notifications.
 - **Control:** Restart/Pause/Resume connectors and trigger Snapshots.
 
 ## 2. Infrastructure Stack (Updated)
@@ -16,7 +16,7 @@
 - **Object Storage:** **Garage** (S3 compatible, Rust).
 - **Database:** Postgres 15 (Source & Sink).
 - **Processing:** Kafka Connect (Debezium + Iceberg + JDBC).
-- **App Logic:** Rust (`strimzi-ops` / `strimzi-ui`) + Python helpers (lint CLI during migration).
+- **App Logic:** Rust (`strimzi-ops` / `strimzi-ui`).
 
 ## 3. Local Development Setup (Docker)
 
@@ -153,7 +153,7 @@ bind_addr = "[::]:3901"
 
 ```
 
-### 5. Updated `secrets.toml` for the Python Tool
+### 5. Updated `secrets.toml` for the Ops Tool
 
 Since Garage runs on port `3900` (not `9000`), update your secrets:
 

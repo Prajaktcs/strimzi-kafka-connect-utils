@@ -167,13 +167,9 @@ ui port="8501": port-forward-all
     @echo "Starting strimzi-ui on http://127.0.0.1:{{ port }} ..."
     cargo run -q -p strimzi-ui -- --port {{ port }} --connect-url http://127.0.0.1:8083 --bootstrap-servers 127.0.0.1:9092
 
-# Lint a connector config file (Rust CLI)
+# Lint a connector config file
 lint-config file:
     cargo run -q -p strimzi-ops --bin strimzi-lint -- lint {{ file }}
-
-# Alias for lint-config
-lint-config-rust file:
-    just lint-config {{ file }}
 
 # Example: list connectors via Rust CLI (needs Connect URL)
 connectors-list connect_url="http://127.0.0.1:8083":

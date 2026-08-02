@@ -16,7 +16,7 @@
 - **Object Storage:** **Garage** (S3 compatible, Rust).
 - **Database:** Postgres 15 (Source & Sink).
 - **Processing:** Kafka Connect (Debezium + Iceberg + JDBC).
-- **App Logic:** Python 3.10+ (Streamlit + Confluent Kafka + Pydantic).
+- **App Logic:** Rust (`strimzi-ops` / `strimzi-ui`) + Python helpers (lint CLI during migration).
 
 ## 3. Local Development Setup (Docker)
 

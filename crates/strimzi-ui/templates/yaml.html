@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}YAML — {{ name }}{% endblock %}
+{% block content %}
+<h2>Strimzi KafkaConnector YAML: {{ name }}</h2>
+<pre class="code">{{ yaml }}</pre>
+<p class="row">
+  <a class="button" href="/control/{{ name }}/yaml/download">Download YAML</a>
+  <a class="button secondary" href="/control?focus={{ name }}">Back</a>
+</p>
+{% endblock %}

@@ -50,10 +50,9 @@ This is the recommended setup for actual use:
 │   Your Local Machine                    │
 │                                         │
 │  ┌──────────────────────────────────┐  │
-│  │  Strimzi Ops (Python)            │  │
-│  │  - Linter CLI                    │  │
-│  │  - Monitor UI (Streamlit)        │  │
-│  │  - Control UI (Streamlit)        │  │
+│  │  Strimzi Ops                     │  │
+│  │  - Linter CLI (Python/Rust)      │  │
+│  │  - Web UI (strimzi-ui / Axum)    │  │
 │  └──────────────────────────────────┘  │
 └─────────────────────────────────────────┘
 ```
@@ -67,7 +66,7 @@ For testing locally, use the provided Kubernetes manifests:
 - **Database**: PostgreSQL 18.4 with CDC enabled
 - **Kafka Connect**: With Debezium 3.6.0 (PostgreSQL connector)
 - **Object Storage / Catalog**: Garage 2.3.0 + Nessie 0.108.4
-- **App Logic**: Python 3.14+ (Streamlit + Confluent Kafka + Pydantic)
+- **App Logic**: Rust (`strimzi-ops` / `strimzi-ui`) + Python helpers during migration
 
 See the "Local Development Environment" section below for details.
 
@@ -120,7 +119,7 @@ git clone <repository-url>
 cd strimzi-ops
 
 # 2. One command: Colima (if needed), deps, Connect image, K8s stack,
-#    secrets.toml, sample connector, port-forwards, and Streamlit UI
+#    secrets.toml, sample connector, port-forwards, and Rust UI
 just setup
 ```
 
@@ -158,8 +157,12 @@ Run `just --list` to see all recipes. The important ones:
   just setup              - Full local bring-up (infra + UI)
   just destroy            - Tear down k8s resources + stop port-forwards
   just status             - Check deployment status
+  just port-forward-all   - (Re)start background port-forwards; health-check Connect
+  just status-forwards    - Show tracked port-forward PIDs
   just stop-forwards      - Stop background port-forwards only
-  just run                - Restart Streamlit UI (stack already up)
+  just run                - Ensure forwards, then start Rust web UI
+  just ui                 - Same as just run (strimzi-ui on :8501)
+  just doctor             - Pods + forwards + HTTP health checks
   just lint-config <file> - Lint a connector config
 ```
 
@@ -221,7 +224,7 @@ Track snapshot progress in real-time:
 4. Set monitoring duration
 5. Click **Start Monitoring**
 
-The monitor will display real-time snapshot progress for all active connectors.
+The monitor consumes Debezium notifications for the selected duration, then shows snapshot status cards for connectors seen during the session.
 
 ### Control (UI)
 
@@ -235,6 +238,7 @@ Manage your connectors:
    - **Pause**: Pause a running connector
    - **Restart**: Restart a connector
    - **Trigger Snapshot**: Initiate a new snapshot
+   - **Logs**: View recent Connect pod logs filtered for the connector (requires `kubectl`)
 5. Edit configuration and update as needed
 
 ## Configuration Examples
@@ -280,19 +284,21 @@ Manage your connectors:
 }
 ```
 
-## Rust CLI (migration in progress)
+## Rust CLI and UI (migration in progress)
 
 Python → Rust migration steps:
 
 1. **Done:** lint/schema in `strimzi-ops-core` + lint CLI
-2. **Current:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
-3. **Planned:** UI replacement
+2. **Done:** Connect REST client, snapshot control, notification monitor, multi-command `strimzi-ops` CLI
+3a. **Done:** Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed
+3b. **Done:** timed Monitor + kubectl logs in the Rust UI
 
 Cargo workspace:
 
-- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor
+- `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor, shared settings
 - `strimzi-ops` — primary CLI (`lint`, `connectors`, `cluster`, `snapshot`, `monitor`)
 - `strimzi-lint` — compatibility binary that only exposes `lint`
+- `strimzi-ui` — web UI for Dashboard and Control (Askama + HTMX)
 
 ```bash
 cargo run -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
@@ -303,6 +309,11 @@ just lint-config-rust examples/debezium-postgres-connector.yaml
 cargo run -p strimzi-ops -- --connect-url http://localhost:8083 connectors list
 cargo run -p strimzi-ops -- --connect-url http://localhost:8083 --bootstrap-servers localhost:9092 \
   snapshot trigger my-connector --type incremental
+
+# Web UI (needs secrets.toml or --connect-url; default port 8501)
+just run
+# or
+just ui
 ```
 
 Kafka-backed commands need **librdkafka** (`brew install librdkafka cmake pkg-config` on macOS).
@@ -313,12 +324,12 @@ Rust code follows [Canonical Rust best practices](https://canonical.github.io/ru
 
 ```
 strimzi-ops/
-├── Cargo.toml                      # Rust workspace (core + CLI)
+├── Cargo.toml                      # Rust workspace (core + CLI + UI)
 ├── crates/                         # Rust crates (see docs/rust-best-practices.md)
-│   ├── strimzi-ops-core/           # lint, connect, control, monitor
-│   └── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
-├── app.py                          # Streamlit application (Monitor & Control UI)
-├── pyproject.toml                  # Project config & dependencies (uv)
+│   ├── strimzi-ops-core/           # lint, connect, control, monitor, k8s, settings
+│   ├── strimzi-ops/                # strimzi-ops + strimzi-lint binaries
+│   └── strimzi-ui/                 # Axum Dashboard/Control UI (just run)
+├── pyproject.toml                  # Python package config & dependencies (uv)
 ├── secrets.toml                    # Configuration file (gitignored)
 ├── secrets.toml.example            # Configuration template
 ├── justfile                        # Development commands (just)
@@ -434,7 +445,7 @@ just deploy
 5. Write `secrets.toml` with Garage credentials from the setup job
 6. Apply the sample Postgres source connector
 7. Start port-forwards in the background
-8. Launch the Streamlit UI
+8. Launch the Rust web UI (`strimzi-ui`)
 
 The first run takes 5–10 minutes.
 
@@ -529,7 +540,7 @@ just test
 
 ```bash
 # Format code with black
-uv run black strimzi_ops/ app.py
+uv run black strimzi_ops/
 
 # Or using Make
 just format
@@ -539,7 +550,7 @@ just format
 
 ```bash
 # Lint with ruff
-uv run ruff check strimzi_ops/ app.py
+uv run ruff check strimzi_ops/
 
 # Or using Make
 just lint

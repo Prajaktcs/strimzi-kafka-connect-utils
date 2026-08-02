@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Logs — {{ name }} — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Connector logs</h2>
+<p class="lede">Showing recent Kafka Connect pod logs filtered for <code>{{ name }}</code></p>
+
+<div class="row">
+  <a class="button" href="/control/{{ name }}/logs">Refresh Logs</a>
+  <a class="button secondary" href="/control">Back to Control</a>
+</div>
+
+<pre>{{ log_text }}</pre>
+{% endblock %}

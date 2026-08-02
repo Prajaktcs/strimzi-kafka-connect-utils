@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Strimzi Ops{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <h1 class="brand">Strimzi Ops</h1>
+      <nav>
+        <a href="/dashboard" class="{% if active == "dashboard" %}active{% endif %}">Dashboard</a>
+        <a href="/monitor" class="{% if active == "monitor" %}active{% endif %}">Monitor</a>
+        <a href="/control" class="{% if active == "control" %}active{% endif %}">Control</a>
+      </nav>
+      <p class="about">Kafka Connect management (Rust UI)</p>
+    </aside>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

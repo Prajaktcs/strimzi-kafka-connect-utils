@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Control — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Connector Control</h2>
+<p class="lede">Manage your Kafka Connect connectors</p>
+
+{% if let Some(msg) = flash %}
+<div class="flash">{{ msg }}</div>
+{% endif %}
+
+<p><a class="button" href="/control/create">Create connector</a></p>
+
+{% if connectors.is_empty() %}
+<p>No connectors found</p>
+{% else %}
+<table>
+  <thead>
+    <tr><th>Name</th><th>Status</th><th>Tasks</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for c in connectors %}
+    <tr class="{% if c.focused %}focus{% endif %}">
+      <td>{{ c.name }}</td>
+      <td>{{ c.state }}</td>
+      <td>{{ c.tasks_running }}/{{ c.tasks_total }}</td>
+      <td class="actions">
+        {% if c.state == "PAUSED" || c.state == "STOPPED" %}
+        <form method="post" action="/control/{{ c.name }}/resume"><button type="submit">Resume</button></form>
+        {% else %}
+        <form method="post" action="/control/{{ c.name }}/pause"><button type="submit">Pause</button></form>
+        {% endif %}
+        <form method="post" action="/control/{{ c.name }}/restart"><button type="submit">Restart</button></form>
+        <a class="button secondary" href="/control/{{ c.name }}/snapshot">Snapshot</a>
+        <a class="button secondary" href="/control/{{ c.name }}/yaml">YAML</a>
+        <a class="button secondary" href="/control/{{ c.name }}/edit">Edit</a>
+        <a class="button secondary" href="/control/{{ c.name }}/logs">Logs</a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

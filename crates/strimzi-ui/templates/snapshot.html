@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Trigger Snapshot — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Trigger Snapshot: {{ name }}</h2>
+{% if let Some(msg) = flash %}
+<div class="flash">{{ msg }}</div>
+{% endif %}
+<form method="post" action="/control/{{ name }}/snapshot" class="stack">
+  <label>Snapshot type
+    <select name="snapshot_type">
+      <option value="incremental" selected>incremental</option>
+      <option value="blocking">blocking</option>
+    </select>
+  </label>
+  <label>Tables (comma-separated, optional)
+    <input type="text" name="tables" placeholder="public.users,public.orders">
+  </label>
+  <div class="row">
+    <button type="submit">Execute snapshot</button>
+    <a class="button secondary" href="/control?focus={{ name }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

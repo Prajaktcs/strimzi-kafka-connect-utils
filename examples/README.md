@@ -71,18 +71,19 @@ cat iceberg-sink-connector.json
 
 ## Usage
 
-### Via Streamlit UI
+### Via CLI / web UI
 
-1. Start the application:
+1. Start the stack (or point at an existing Connect):
    ```bash
-   uv run streamlit run app.py
+   just ui
    ```
 
-2. Navigate to the "Linter" page
-
-3. Paste your YAML or JSON configuration, or upload a file
-
-4. Click "Lint Configuration"
+2. Use Dashboard / Control in the browser, or lint from the CLI:
+   ```bash
+   just lint-config-rust examples/debezium-postgres-connector.yaml
+   # or Python:
+   uv run strimzi-lint lint examples/debezium-postgres-connector.yaml
+   ```
 
 ### Via Python (YAML with comments)
 

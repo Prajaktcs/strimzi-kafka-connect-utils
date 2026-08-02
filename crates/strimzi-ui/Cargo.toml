@@ -1,31 +1,36 @@
 [package]
-name = "strimzi-ops"
-description = "CLI for Strimzi Ops: lint, control, and monitor Kafka Connect"
+name = "strimzi-ui"
+description = "Axum + HTMX web UI for Strimzi Ops (Dashboard and Control)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-default-run = "strimzi-ops"
+default-run = "strimzi-ui"
 
 [lib]
-name = "strimzi_ops"
+name = "strimzi_ui"
 path = "src/lib.rs"
 
 [[bin]]
-name = "strimzi-ops"
+name = "strimzi-ui"
 path = "src/main.rs"
 
-[[bin]]
-name = "strimzi-lint"
-path = "src/bin/strimzi_lint.rs"
-
 [dependencies]
+askama.workspace = true
+askama_web.workspace = true
+axum.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 strimzi-ops-core = { workspace = true, features = ["kafka"] }
 thiserror.workspace = true
+tokio.workspace = true
+tower-http.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

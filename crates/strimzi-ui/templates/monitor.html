@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Monitor — Strimzi Ops{% endblock %}
+{% block content %}
+<h2>Real-time Snapshot Monitoring</h2>
+<p class="lede">Track Debezium snapshot progress via notification events</p>
+
+{% if let Some(err) = error %}
+<div class="error">{{ err }}</div>
+{% endif %}
+
+<form class="stack" method="post" action="/monitor">
+  <label>
+    Notification Topic
+    <input type="text" name="topic" value="{{ topic }}" required>
+  </label>
+  <label>
+    Duration (seconds)
+    <input type="number" name="duration" min="10" max="300" value="{{ duration }}" required>
+  </label>
+  <div class="row">
+    <button type="submit">Start Monitoring</button>
+  </div>
+</form>
+<p class="lede">Monitoring runs for the selected duration, then shows collected snapshot status.</p>
+{% endblock %}

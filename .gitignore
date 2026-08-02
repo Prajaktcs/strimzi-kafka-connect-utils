@@ -66,5 +66,5 @@ htmlcov/
 /target/
 **/*.rs.bk
 
-# Streamlit
-.streamlit/secrets.toml
+# Local secrets / env (not Streamlit)
+.streamlit/

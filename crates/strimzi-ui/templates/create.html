@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Create connector{% endblock %}
+{% block content %}
+<h2>Create connector</h2>
+{% if let Some(msg) = flash %}
+<div class="flash">{{ msg }}</div>
+{% endif %}
+{% if let Some(err) = error %}
+<div class="error"><pre>{{ err }}</pre></div>
+{% endif %}
+<form method="post" action="/control/create" class="stack">
+  <label>Connector configuration (JSON)
+    <textarea name="config_json" rows="18">{{ config_json }}</textarea>
+  </label>
+  <div class="row">
+    <button type="submit">Create connector</button>
+    <a class="button secondary" href="/control">Cancel</a>
+  </div>
+</form>
+{% endblock %}

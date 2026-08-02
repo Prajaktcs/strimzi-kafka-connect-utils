@@ -1,5 +1,4 @@
-# Core dependencies
-streamlit>=1.40.0
+# Core dependencies (Python CLI / library helpers during Rust migration)
 pydantic>=2.10.0
 tomli>=2.2.0
 

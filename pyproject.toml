@@ -12,7 +12,6 @@ keywords = [
   "strimzi",
   "debezium",
   "data-engineering",
-  "streamlit",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -22,7 +21,6 @@ classifiers = [
 ]
 
 dependencies = [
-  "streamlit>=1.40.0",
   "pydantic>=2.10.0",
   "tomli>=2.2.0",
   "confluent-kafka>=2.7.0",
@@ -41,7 +39,6 @@ dev = [
 ]
 
 [project.scripts]
-strimzi-ops = "app:main"
 strimzi-lint = "strimzi_ops.cli:main"
 
 [build-system]

@@ -28,8 +28,11 @@ Prefer putting new domain logic in Rust crates under `crates/`. Python remains f
 ```bash
 just rust-check          # fmt + clippy -D warnings
 just rust-test
-just run                 # Rust UI (alias for just ui)
-just ui                  # strimzi-ui on :8501
+just run                 # ensures port-forwards, then Rust UI
+just ui                  # same as just run (strimzi-ui on :8501)
+just port-forward-all    # (re)start + health-check Connect :8083
+just status-forwards
+just doctor
 just lint-config-rust <file>
 cargo run -p strimzi-ops -- connectors list --connect-url http://localhost:8083
 just lint-config <file>  # Python CLI (still supported)

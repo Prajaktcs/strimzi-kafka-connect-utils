@@ -91,11 +91,12 @@ write_secrets() {
   local access_key="$1"
   local secret_key="$2"
   local bucket="${3:-warehouse}"
-  local endpoint="${4:-http://localhost:3900}"
+  local endpoint="${4:-http://127.0.0.1:3900}"
+  # Prefer 127.0.0.1 over localhost so clients (reqwest, curl) do not hit ::1 first.
   cat >"${ROOT}/secrets.toml" <<EOF
 [kafka]
-bootstrap_servers = "localhost:9092"
-connect_url = "http://localhost:8083"
+bootstrap_servers = "127.0.0.1:9092"
+connect_url = "http://127.0.0.1:8083"
 
 [storage]
 type = "s3"
@@ -113,49 +114,85 @@ apply_connector() {
   kubectl apply -f "${ROOT}/k8s/test-iceberg-sink.yaml"
 }
 
+port_listening() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  # Fallback: try connecting to the port.
+  (echo >/dev/tcp/127.0.0.1/"${port}") >/dev/null 2>&1
+}
+
+kill_port_listeners() {
+  local port="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local stale
+  stale="$(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  if [[ -n "${stale}" ]]; then
+    echo "Stopping process(es) on port ${port}: ${stale}"
+    # shellcheck disable=SC2086
+    kill ${stale} 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 start_port_forward() {
   local name="$1"
   local svc="$2"
   local local_port="$3"
   local remote_port="$4"
-  local pid_file log_file
+  local pid_file log_file old_pid
 
   mkdir -p "${PID_DIR}"
   pid_file="${PID_DIR}/${name}.pid"
   log_file="${PID_DIR}/${name}.log"
 
   if [[ -f "${pid_file}" ]]; then
-    local old_pid
     old_pid="$(cat "${pid_file}")"
-    if kill -0 "${old_pid}" 2>/dev/null; then
-      echo "Port-forward ${name} already running (pid ${old_pid})"
+    if kill -0 "${old_pid}" 2>/dev/null && port_listening "${local_port}"; then
+      echo "Port-forward ${name} already running (pid ${old_pid} → 127.0.0.1:${local_port})"
       return 0
+    fi
+    if kill -0 "${old_pid}" 2>/dev/null; then
+      echo "Port-forward ${name} pid ${old_pid} is stale; restarting"
+      kill "${old_pid}" 2>/dev/null || true
+      sleep 1
     fi
     rm -f "${pid_file}"
   fi
 
-  # Free a stale listener on the local port if present
-  if command -v lsof >/dev/null 2>&1; then
-    local stale
-    stale="$(lsof -tiTCP:"${local_port}" -sTCP:LISTEN 2>/dev/null || true)"
-    if [[ -n "${stale}" ]]; then
-      echo "Stopping process(es) on port ${local_port}: ${stale}"
-      # shellcheck disable=SC2086
-      kill ${stale} 2>/dev/null || true
-      sleep 1
-    fi
-  fi
+  kill_port_listeners "${local_port}"
 
-  kubectl port-forward -n "${NAMESPACE}" "${svc}" "${local_port}:${remote_port}" \
+  # Bind IPv4 only and detach so forwards survive just/script exit.
+  : >"${log_file}"
+  nohup kubectl port-forward \
+    --address 127.0.0.1 \
+    -n "${NAMESPACE}" \
+    "${svc}" \
+    "${local_port}:${remote_port}" \
     >"${log_file}" 2>&1 &
-  echo $! >"${pid_file}"
-  sleep 1
+  local pf_pid=$!
+  echo "${pf_pid}" >"${pid_file}"
+  disown "${pf_pid}" 2>/dev/null || true
 
-  if ! kill -0 "$(cat "${pid_file}")" 2>/dev/null; then
-    echo "Failed to start port-forward ${name}. See ${log_file}"
-    return 1
+  # Wait briefly for the listener to come up.
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if kill -0 "$(cat "${pid_file}")" 2>/dev/null && port_listening "${local_port}"; then
+      echo "Port-forward ${name} → 127.0.0.1:${local_port}"
+      return 0
+    fi
+    sleep 0.3
+  done
+
+  echo "Failed to start port-forward ${name}. See ${log_file}"
+  if [[ -f "${log_file}" ]]; then
+    tail -n 20 "${log_file}" || true
   fi
-  echo "Port-forward ${name} → localhost:${local_port}"
+  return 1
 }
 
 port_forward_all() {
@@ -164,12 +201,56 @@ port_forward_all() {
   start_port_forward postgres svc/postgres 5432 5432
   start_port_forward garage svc/garage 3900 3900
   start_port_forward nessie svc/nessie 19120 19120
+
+  if curl -sf --connect-timeout 3 "http://127.0.0.1:8083/" >/dev/null; then
+    echo "Connect API healthy at http://127.0.0.1:8083/"
+  else
+    echo "Warning: Connect API did not respond on http://127.0.0.1:8083/ yet."
+    echo "  Check: kubectl get pods -n ${NAMESPACE} -l strimzi.io/name=my-connect-cluster-connect"
+    echo "  Logs:  ${PID_DIR}/connect.log"
+    return 1
+  fi
   echo "All port-forwards running in background (just stop-forwards to stop)."
+}
+
+status_port_forwards() {
+  local name port pid_file pid
+  local -a pairs=(
+    "connect:8083"
+    "kafka:9092"
+    "postgres:5432"
+    "garage:3900"
+    "nessie:19120"
+  )
+  echo "Background port-forwards (.local/port-forwards):"
+  for entry in "${pairs[@]}"; do
+    name="${entry%%:*}"
+    port="${entry##*:}"
+    pid_file="${PID_DIR}/${name}.pid"
+    if [[ -f "${pid_file}" ]]; then
+      pid="$(cat "${pid_file}")"
+      if kill -0 "${pid}" 2>/dev/null && port_listening "${port}"; then
+        echo "  ${name}: up (pid ${pid} → 127.0.0.1:${port})"
+      else
+        echo "  ${name}: down (stale pid file)"
+      fi
+    elif port_listening "${port}"; then
+      echo "  ${name}: listening on ${port} (not tracked by just)"
+    else
+      echo "  ${name}: down"
+    fi
+  done
 }
 
 stop_port_forwards() {
   if [[ ! -d "${PID_DIR}" ]]; then
     echo "No port-forwards to stop."
+    # Still clear any stray listeners on known ports.
+    kill_port_listeners 8083
+    kill_port_listeners 9092
+    kill_port_listeners 5432
+    kill_port_listeners 3900
+    kill_port_listeners 19120
     return 0
   fi
   local pid_file pid
@@ -182,6 +263,12 @@ stop_port_forwards() {
     fi
     rm -f "${pid_file}"
   done
+  kill_port_listeners 8083
+  kill_port_listeners 9092
+  kill_port_listeners 5432
+  kill_port_listeners 3900
+  kill_port_listeners 19120
+  echo "Port-forwards stopped."
 }
 
 usage() {
@@ -194,6 +281,7 @@ Commands:
   sync-secrets
   apply-connector
   port-forward-all
+  status-forwards
   stop-forwards
 EOF
 }
@@ -207,6 +295,7 @@ main() {
     sync-secrets) sync_secrets "$@" ;;
     apply-connector) apply_connector ;;
     port-forward-all) port_forward_all ;;
+    status-forwards) status_port_forwards ;;
     stop-forwards) stop_port_forwards ;;
     *) usage; exit 1 ;;
   esac

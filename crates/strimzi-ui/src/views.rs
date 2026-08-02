@@ -12,9 +12,17 @@ impl IntoResponse for Error {
         let status = match &self {
             Self::ConfigRequired => StatusCode::SERVICE_UNAVAILABLE,
             Self::Json { .. } => StatusCode::BAD_REQUEST,
+            Self::Core(strimzi_ops_core::Error::ConnectHttp { .. }) => StatusCode::BAD_GATEWAY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        let body = format!("<html><body><h1>Error</h1><pre>{self}</pre><p><a href=\"/dashboard\">Back</a></p></body></html>");
+        let body = format!(
+            "<html><body style=\"font-family: sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem;\">\
+             <h1>Error</h1><pre style=\"white-space: pre-wrap;\">{self}</pre>\
+             <p><a href=\"/dashboard\">Back to Dashboard</a></p>\
+             <p>If Connect is down locally, start port-forwards with <code>just port-forward-all</code> \
+             (or <code>just setup</code> for a full local stack), then refresh.</p>\
+             </body></html>"
+        );
         (status, Html(body)).into_response()
     }
 }

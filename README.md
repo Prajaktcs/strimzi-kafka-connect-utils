@@ -157,9 +157,12 @@ Run `just --list` to see all recipes. The important ones:
   just setup              - Full local bring-up (infra + UI)
   just destroy            - Tear down k8s resources + stop port-forwards
   just status             - Check deployment status
+  just port-forward-all   - (Re)start background port-forwards; health-check Connect
+  just status-forwards    - Show tracked port-forward PIDs
   just stop-forwards      - Stop background port-forwards only
-  just run                - Start Rust web UI (alias for just ui)
-  just ui                 - Start strimzi-ui on :8501
+  just run                - Ensure forwards, then start Rust web UI
+  just ui                 - Same as just run (strimzi-ui on :8501)
+  just doctor             - Pods + forwards + HTTP health checks
   just lint-config <file> - Lint a connector config
 ```
 

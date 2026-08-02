@@ -63,7 +63,7 @@ impl ConnectClient {
     }
 
     pub fn get_cluster_info(&self) -> Result<ClusterInfo> {
-        self.request_json(Method::GET, "", None)
+        self.request_json(Method::GET, "/", None)
     }
 
     pub fn get_connector_plugins(&self) -> Result<Vec<ConnectorPlugin>> {
@@ -172,10 +172,23 @@ impl ConnectClient {
             builder = builder.json(value);
         }
 
-        let response = builder.send().map_err(|source| Error::ConnectHttp {
-            method: method.to_string(),
-            path: path.to_owned(),
-            reason: source.to_string(),
+        let response = builder.send().map_err(|source| {
+            let hint = if source.is_connect() || source.is_timeout() {
+                format!(
+                    "cannot reach {url} ({source}). Is Kafka Connect running and port-forwarded? Try `just port-forward-all` (or `just ui`, which starts forwards first)."
+                )
+            } else {
+                format!("request to {url} failed: {source}")
+            };
+            Error::ConnectHttp {
+                method: method.to_string(),
+                path: if path.is_empty() {
+                    "/".to_owned()
+                } else {
+                    path.to_owned()
+                },
+                reason: hint,
+            }
         })?;
 
         let status = response.status();
@@ -192,11 +205,17 @@ impl ConnectClient {
     }
 
     fn join_path(&self, path: &str) -> Result<Url> {
-        if path.is_empty() {
-            return Ok(self.base_url.clone());
+        if path.is_empty() || path == "/" {
+            // Ensure a trailing slash so Connect root (`GET /`) resolves correctly.
+            let mut url = self.base_url.clone();
+            if !url.path().ends_with('/') {
+                url.set_path(&format!("{}/", url.path().trim_end_matches('/')));
+            }
+            return Ok(url);
         }
+        let relative = path.trim_start_matches('/');
         self.base_url
-            .join(path)
+            .join(relative)
             .map_err(|source| Error::InvalidConnectUrl {
                 url: format!("{}{path}", self.base_url),
                 reason: source.to_string(),

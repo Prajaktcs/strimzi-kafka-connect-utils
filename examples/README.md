@@ -80,45 +80,11 @@ cat iceberg-sink-connector.json
 
 2. Use Dashboard / Control in the browser, or lint from the CLI:
    ```bash
-   just lint-config-rust examples/debezium-postgres-connector.yaml
-   # or Python:
-   uv run strimzi-lint lint examples/debezium-postgres-connector.yaml
+   just lint-config examples/debezium-postgres-connector.yaml
+   cargo run -q -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml
+   cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --json examples/debezium-postgres-connector.yaml
+   cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict examples/debezium-postgres-connector.yaml
    ```
-
-### Via Python (YAML with comments)
-
-```python
-from strimzi_ops.validator import ConnectorValidator
-
-# Load configuration from YAML file
-with open("examples/debezium-postgres-connector.yaml") as f:
-    config_text = f.read()
-
-# Validate
-validator = ConnectorValidator()
-result = validator.validate_text(config_text, format="yaml")
-
-print(result['formatted'])
-print(f"Valid: {result['valid']}")
-print(f"Summary: {result['summary']}")
-```
-
-### Via Python (Direct config dict)
-
-```python
-from strimzi_ops.validator import ConnectorValidator
-import json
-
-# Load configuration
-with open("examples/debezium-postgres-connector.json") as f:
-    config = json.load(f)
-
-# Validate
-validator = ConnectorValidator()
-result = validator.validate_config(config)
-
-print(result['formatted'])
-```
 
 ## Best Practices
 

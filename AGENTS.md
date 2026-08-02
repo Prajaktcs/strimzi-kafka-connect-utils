@@ -12,16 +12,17 @@ This file orients Cursor (and humans) for work in this repository.
 
 Strimzi Ops: lint, monitor, and control Kafka Connect on Kubernetes/Strimzi.
 
-## Migration (Python → Rust)
+## Stack
 
-| Step | Scope | Status |
-|------|--------|--------|
-| 1 | `strimzi-ops-core` lint + schema; CLI lint | Done |
-| 2 | Connect REST + control/monitor + `strimzi-ops` CLI | Done |
-| 3a | Axum + HTMX Dashboard + Control UI (`strimzi-ui`); Streamlit removed | Done |
-| 3b | Timed Monitor + kubectl logs in the Rust UI | Done |
+Rust-only application code under `crates/`:
 
-Prefer putting new domain logic in Rust crates under `crates/`. Python remains for `strimzi-lint` and transitional library helpers.
+| Crate | Role |
+|-------|------|
+| `strimzi-ops-core` | lint, Connect client, control, monitor, k8s helpers, settings |
+| `strimzi-ops` | CLI (`lint`, connectors, cluster, snapshot, monitor) + `strimzi-lint` compat bin |
+| `strimzi-ui` | Axum + Askama + HTMX web UI |
+
+Python has been removed from the project.
 
 ## Commands
 
@@ -33,9 +34,8 @@ just ui                  # same as just run (strimzi-ui on :8501)
 just port-forward-all    # (re)start + health-check Connect :8083
 just status-forwards
 just doctor
-just lint-config-rust <file>
-cargo run -p strimzi-ops -- connectors list --connect-url http://localhost:8083
-just lint-config <file>  # Python CLI (still supported)
+just lint-config <file>
+cargo run -p strimzi-ops -- connectors list --connect-url http://127.0.0.1:8083
 ```
 
 Control/monitor builds need system **librdkafka** (and cmake when building `rdkafka` from source). On macOS: `brew install librdkafka cmake pkg-config`.

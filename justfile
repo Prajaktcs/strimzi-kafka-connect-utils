@@ -4,22 +4,23 @@
 #   just setup
 #
 # That will:
-#   1. uv sync
-#   2. start Colima+k8s if needed
-#   3. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
-#   4. build Connect image with Debezium + Iceberg sink
-#   5. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + Garage 2.3 + Nessie
+#   1. start Colima+k8s if needed
+#   2. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
+#   3. build Connect image with Debezium + Iceberg sink
+#   4. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + Garage 2.3 + Nessie
 #      (wipes legacy v1beta2 Strimzi CRDs if present; installs operator into kafka ns)
-#   6. write secrets.toml with local-dev Garage keys
-#   7. apply sample Postgres source + Iceberg sink connectors
-#   8. start background port-forwards (nohup under .local/port-forwards/; IPv4)
-#   9. launch Rust web UI (strimzi-ui)
+#   5. write secrets.toml with local-dev Garage keys
+#   6. apply sample Postgres source + Iceberg sink connectors
+#   7. start background port-forwards (nohup under .local/port-forwards/; IPv4)
+#   8. launch Rust web UI (strimzi-ui)
 #
 # Day-to-day:
 #   just port-forward-all   # (re)start + health-check Connect :8083
 #   just status-forwards    # show tracked forward PIDs
 #   just ui                 # ensures forwards, then starts strimzi-ui
 #   just doctor             # pods + forwards + HTTP checks
+#   just rust-check         # fmt + clippy -D warnings
+#   just lint-config <file> # Rust strimzi-lint
 #
 # Tear down:
 #   just destroy        # app namespace (+ stop port-forwards)
@@ -47,7 +48,7 @@ default:
     @just --list
 
 # One-command local setup → infra + secrets + connector + port-forwards + UI
-setup: install ensure-cluster build-connect deploy sync-secrets apply-connector port-forward-all
+setup: ensure-cluster build-connect deploy sync-secrets apply-connector port-forward-all
     @echo ""
     @echo "Local stack is ready."
     @echo "  Connect API : http://127.0.0.1:8083"
@@ -63,15 +64,6 @@ setup: install ensure-cluster build-connect deploy sync-secrets apply-connector 
 
 # Alias for setup
 up: setup
-
-# Install Python dependencies with uv
-install:
-    @echo "Installing Python dependencies with uv..."
-    uv sync
-    @echo "Dependencies installed."
-
-# Alias for install
-sync: install
 
 # Start Colima+k8s if needed, then verify kubectl
 ensure-cluster:
@@ -175,49 +167,36 @@ ui port="8501": port-forward-all
     @echo "Starting strimzi-ui on http://127.0.0.1:{{ port }} ..."
     cargo run -q -p strimzi-ui -- --port {{ port }} --connect-url http://127.0.0.1:8083 --bootstrap-servers 127.0.0.1:9092
 
-# Lint a connector config file (Python CLI)
-lint-config file:
-    uv run strimzi-lint lint {{ file }}
-
 # Lint a connector config file (Rust CLI)
-lint-config-rust file:
+lint-config file:
     cargo run -q -p strimzi-ops --bin strimzi-lint -- lint {{ file }}
+
+# Alias for lint-config
+lint-config-rust file:
+    just lint-config {{ file }}
 
 # Example: list connectors via Rust CLI (needs Connect URL)
 connectors-list connect_url="http://127.0.0.1:8083":
     cargo run -q -p strimzi-ops -- --connect-url {{ connect_url }} connectors list
 
-# Run Python tests
-test:
-    @echo "Running tests..."
-    uv run pytest tests/ -v
+# Run workspace tests (alias for rust-test)
+test: rust-test
 
 # Run Rust workspace tests
 rust-test:
     cargo test --workspace --all-features
 
-# Format Python code with black
-format:
-    @echo "Formatting Python code..."
-    uv run black strimzi_ops/
+# Format Rust with rustfmt (alias)
+format: rust-fmt
 
 # Format Rust with rustfmt
 rust-fmt:
     cargo fmt --all
 
-# Lint Python code with ruff
-lint:
-    @echo "Linting Python code..."
-    uv run ruff check strimzi_ops/
+# Clippy + rustfmt check (Canonical preconditions); also used as `just lint` / `just check`
+lint: rust-check
+check: rust-check
 
-# Clippy + rustfmt check (Canonical preconditions)
 rust-check:
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-# Run format check + ruff
-check:
-    @echo "Running code quality checks..."
-    uv run black --check strimzi_ops/
-    uv run ruff check strimzi_ops/
-    @echo "All checks passed!"

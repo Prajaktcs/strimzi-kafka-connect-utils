@@ -46,4 +46,4 @@ Control **Logs** in the UI shells out to **kubectl** (must be on `PATH` and conf
 
 - Follow Canonical structural, error/panic, and code discipline (see docs above)
 - No type-erased errors in library crates
-- Pass `just rust-check` and `just rust-test`
+- Pass `just rust-check` and `just rust-test` (also enforced by [`.github/workflows/ci.yml`](.github/workflows/ci.yml))

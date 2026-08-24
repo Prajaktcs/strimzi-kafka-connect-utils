@@ -66,14 +66,18 @@ pub fn parse_config_text(
 fn flatten_connect_payload(
     mut map: serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
-    let Some(Value::Object(nested)) = map.get("config") else {
-        return map;
-    };
-    if map.contains_key("connector.class") || !nested.contains_key("connector.class") {
+    if map.contains_key("connector.class") {
         return map;
     }
 
-    let mut nested = nested.clone();
+    let Some(Value::Object(mut nested)) = map.remove("config") else {
+        return map;
+    };
+    if !nested.contains_key("connector.class") {
+        map.insert("config".to_owned(), Value::Object(nested));
+        return map;
+    }
+
     if !nested.contains_key("name") {
         if let Some(name) = map.remove("name") {
             nested.insert("name".to_owned(), name);

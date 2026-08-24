@@ -353,6 +353,7 @@ In GitHub Actions (after installing a Rust toolchain):
 ```yaml
 - name: Lint connectors
   run: |
+    set -euo pipefail
     shopt -s nullglob globstar
     for file in connectors/**/*.{yaml,yml,json}; do
       cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict "$file"

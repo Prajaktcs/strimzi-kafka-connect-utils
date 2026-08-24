@@ -329,10 +329,10 @@ strimzi-ops/
 
 This repo runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pushes and pull requests to `main`:
 
-- `cargo fmt --check`
+- `cargo fmt --all -- --check`
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - `cargo test --workspace --all-features`
-- lint every `examples/*.yaml` with `strimzi-lint`
+- lint every `examples/*.{yaml,yml,json}` connector config with `strimzi-lint`
 
 Locally, the same gates are:
 
@@ -353,8 +353,8 @@ In GitHub Actions (after installing a Rust toolchain):
 ```yaml
 - name: Lint connectors
   run: |
-    shopt -s nullglob
-    for file in connectors/**/*.{yaml,yml}; do
+    shopt -s nullglob globstar
+    for file in connectors/**/*.{yaml,yml,json}; do
       cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict "$file"
     done
 ```

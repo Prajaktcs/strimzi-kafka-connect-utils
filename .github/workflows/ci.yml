@@ -23,7 +23,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config libssl-dev
+            build-essential cmake pkg-config libssl-dev \
+            libcurl4-openssl-dev libsasl2-dev libzstd-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -46,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for file in examples/*.yaml; do
+          for file in examples/*.{yaml,yml,json}; do
             echo "Linting $file..."
             cargo run -q -p strimzi-ops --bin strimzi-lint -- lint "$file"
           done

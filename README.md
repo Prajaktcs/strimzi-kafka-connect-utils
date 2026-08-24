@@ -238,7 +238,7 @@ Manage your connectors:
   "plugin.name": "pgoutput",
   "slot.name": "debezium_slot",
   "publication.name": "debezium_publication",
-  "schema.history.internal.kafka.bootstrap.servers": "redpanda:29092",
+  "schema.history.internal.kafka.bootstrap.servers": "my-cluster-kafka-bootstrap:9092",
   "schema.history.internal.kafka.topic": "schema-history.lakehouse",
   "snapshot.mode": "initial",
   "notification.enabled.channels": "sink",
@@ -322,46 +322,45 @@ strimzi-ops/
 │   └── README.md
 └── .github/
     └── workflows/
-        └── lint-connectors.yml.example  # CI/CD example
+        └── ci.yml                  # fmt, clippy, tests, example lint
 ```
 
 ## CI/CD Integration
 
-The linter can be integrated into your CI/CD pipeline to validate connector configurations automatically.
+This repo runs [`.github/workflows/ci.yml`](.github/workflows/ci.yml) on pushes and pull requests to `main`:
 
-### GitHub Actions
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
+- lint every `examples/*.{yaml,yml,json}` connector config with `strimzi-lint`
 
-See `.github/workflows/lint-connectors.yml.example` for a complete example. Basic usage:
-
-```yaml
-- name: Install Rust
-  uses: dtolnay/rust-toolchain@stable
-
-- name: Lint connectors
-  run: cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connectors/my-connector.yaml
-```
-
-### GitLab CI
-
-```yaml
-lint-connectors:
-  image: rust:1.85
-  script:
-    - cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connectors/*.yaml
-```
-
-### Pre-commit Hook
-
-Add to `.git/hooks/pre-commit` (or use the repo `.pre-commit-config.yaml`):
+Locally, the same gates are:
 
 ```bash
-#!/bin/bash
-for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(yaml|yml|json)$'); do
-  if [[ $file == connectors/* ]]; then
-    cargo run -q -p strimzi-ops --bin strimzi-lint -- lint "$file" || exit 1
-  fi
-done
+just rust-check
+just rust-test
+just lint-config examples/debezium-postgres-connector.yaml
 ```
+
+### Lint your own connector configs
+
+```bash
+cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict path/to/connector.yaml
+```
+
+In GitHub Actions (after installing a Rust toolchain):
+
+```yaml
+- name: Lint connectors
+  run: |
+    set -euo pipefail
+    shopt -s nullglob globstar
+    for file in connectors/**/*.{yaml,yml,json}; do
+      cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict "$file"
+    done
+```
+
+Pre-commit: this repo’s [`.pre-commit-config.yaml`](.pre-commit-config.yaml) runs `just rust-check` on Rust changes.
 
 ## Local Development Environment
 
@@ -489,21 +488,25 @@ just rust-check   # also aliased as just lint / just check
 
 ### Kafka Connect Not Starting
 
-If Kafka Connect fails to start, ensure Redpanda is healthy:
+Check the local stack and Connect logs:
 
 ```bash
-docker-compose ps
-docker-compose logs redpanda
+just doctor
+just status
+kubectl -n kafka get pods
+kubectl -n kafka logs -l strimzi.io/name=my-connect-cluster-connect --tail=100
 ```
+
+Ensure Kafka is ready before Connect (`my-cluster-kafka-bootstrap` in the `kafka` namespace).
 
 ### Garage Access Keys Not Generated
 
-Manually create keys using the Garage CLI:
+`just setup` writes Garage credentials into `secrets.toml`. To recreate keys manually:
 
 ```bash
-docker exec -it garage /garage key create lakehouse-key
-docker exec -it garage /garage bucket create warehouse
-docker exec -it garage /garage bucket allow warehouse --read --write --key lakehouse-key
+kubectl -n kafka exec -it garage-0 -- /garage key create lakehouse-key
+kubectl -n kafka exec -it garage-0 -- /garage bucket create warehouse
+kubectl -n kafka exec -it garage-0 -- /garage bucket allow warehouse --read --write --key lakehouse-key
 ```
 
 ### Configuration Validation Errors
@@ -516,7 +519,7 @@ Ensure your connector configuration matches the schema validated by `strimzi-ops
 
 ## References
 
-- [Redpanda Documentation](https://docs.redpanda.com)
+- [Strimzi Documentation](https://strimzi.io/docs/operators/latest/overview.html)
 - [Garage Documentation](https://garagehq.deuxfleurs.fr)
 - [Debezium Documentation](https://debezium.io)
 - [Kafka Connect REST API](https://docs.confluent.io/platform/current/connect/references/restapi.html)

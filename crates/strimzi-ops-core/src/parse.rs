@@ -54,12 +54,36 @@ pub fn parse_config_text(
     };
 
     match value {
-        Value::Object(map) => Ok(map),
+        Value::Object(map) => Ok(flatten_connect_payload(map)),
         _ => Err(Error::Parse {
             format: format_label(format),
             reason: "top-level value must be a mapping/object".to_owned(),
         }),
     }
+}
+
+/// Accept Kafka Connect REST create payloads (`name` + nested `config`).
+fn flatten_connect_payload(
+    mut map: serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    if map.contains_key("connector.class") {
+        return map;
+    }
+
+    let Some(Value::Object(mut nested)) = map.remove("config") else {
+        return map;
+    };
+    if !nested.contains_key("connector.class") {
+        map.insert("config".to_owned(), Value::Object(nested));
+        return map;
+    }
+
+    if !nested.contains_key("name") {
+        if let Some(name) = map.remove("name") {
+            nested.insert("name".to_owned(), name);
+        }
+    }
+    nested
 }
 
 fn format_label(format: ConfigFormat) -> &'static str {
@@ -112,6 +136,24 @@ mod tests {
         let text = "name: demo\nconnector.class: foo.Bar\n";
         let map = parse_config_text(text, ConfigFormat::Yaml).unwrap();
         assert_eq!(map.get("name").and_then(Value::as_str), Some("demo"));
+    }
+
+    #[test]
+    fn unwraps_connect_rest_json_payload() {
+        let text = r#"{
+            "name": "demo",
+            "config": {
+                "connector.class": "foo.Bar",
+                "tasks.max": "1"
+            }
+        }"#;
+        let map = parse_config_text(text, ConfigFormat::Json).unwrap();
+        assert_eq!(map.get("name").and_then(Value::as_str), Some("demo"));
+        assert_eq!(
+            map.get("connector.class").and_then(Value::as_str),
+            Some("foo.Bar")
+        );
+        assert!(map.get("config").is_none());
     }
 
     #[test]

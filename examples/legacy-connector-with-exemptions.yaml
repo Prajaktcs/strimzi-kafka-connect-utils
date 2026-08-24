@@ -22,7 +22,7 @@ slot.name: legacy_slot
 publication.name: legacy_publication
 
 # Schema history
-schema.history.internal.kafka.bootstrap.servers: redpanda:29092
+schema.history.internal.kafka.bootstrap.servers: my-cluster-kafka-bootstrap:9092
 schema.history.internal.kafka.topic: schema-history.legacy
 
 # Snapshot configuration

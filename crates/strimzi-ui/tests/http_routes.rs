@@ -4,14 +4,16 @@ use strimzi_ops_core::ConnectionSettings;
 use strimzi_ui::{router, AppState};
 use tower::ServiceExt;
 
+fn app(settings: ConnectionSettings) -> axum::Router {
+    router(AppState::from_single(settings))
+}
+
 #[tokio::test]
 async fn monitor_requires_bootstrap_servers() {
-    let state = AppState::new(ConnectionSettings::default());
-    let app = router(state);
-    let response = app
+    let response = app(ConnectionSettings::default())
         .oneshot(
             Request::builder()
-                .uri("/monitor")
+                .uri("/c/default/monitor")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -27,20 +29,18 @@ async fn monitor_requires_bootstrap_servers() {
 
 #[tokio::test]
 async fn monitor_form_renders_with_bootstrap() {
-    let state = AppState::new(ConnectionSettings {
+    let response = app(ConnectionSettings {
         bootstrap_servers: Some("localhost:9092".to_owned()),
         ..ConnectionSettings::default()
-    });
-    let app = router(state);
-    let response = app
-        .oneshot(
-            Request::builder()
-                .uri("/monitor")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    })
+    .oneshot(
+        Request::builder()
+            .uri("/c/default/monitor")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -48,16 +48,15 @@ async fn monitor_form_renders_with_bootstrap() {
     let text = String::from_utf8(body.to_vec()).unwrap();
     assert!(text.contains("Start Monitoring"));
     assert!(text.contains("debezium.notifications"));
+    assert!(text.contains("/c/default/monitor"));
 }
 
 #[tokio::test]
 async fn dashboard_missing_config_page() {
-    let state = AppState::new(ConnectionSettings::default());
-    let app = router(state);
-    let response = app
+    let response = app(ConnectionSettings::default())
         .oneshot(
             Request::builder()
-                .uri("/dashboard")
+                .uri("/c/default/dashboard")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -73,12 +72,10 @@ async fn dashboard_missing_config_page() {
 
 #[tokio::test]
 async fn control_missing_config_page() {
-    let state = AppState::new(ConnectionSettings::default());
-    let app = router(state);
-    let response = app
+    let response = app(ConnectionSettings::default())
         .oneshot(
             Request::builder()
-                .uri("/control")
+                .uri("/c/default/control")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -93,28 +90,75 @@ async fn control_missing_config_page() {
 }
 
 #[tokio::test]
-async fn root_redirects_to_dashboard() {
-    let state = AppState::new(ConnectionSettings::default());
-    let app = router(state);
-    let response = app
+async fn root_redirects_to_cluster_dashboard() {
+    let response = app(ConnectionSettings::default())
         .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers().get("location").unwrap(), "/dashboard");
+    assert_eq!(
+        response.headers().get("location").unwrap(),
+        "/c/default/dashboard"
+    );
+}
+
+#[tokio::test]
+async fn unknown_cluster_is_not_found() {
+    let response = app(ConnectionSettings::default())
+        .oneshot(
+            Request::builder()
+                .uri("/c/nope/dashboard")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn control_logs_route_returns_page() {
-    let state = AppState::new(ConnectionSettings {
+    let response = app(ConnectionSettings {
         connect_cluster_name: Some("test-cluster".to_owned()),
         ..ConnectionSettings::default()
-    });
-    let app = router(state);
-    let response = app
+    })
+    .oneshot(
+        Request::builder()
+            .uri("/c/test-cluster/control/demo-connector/logs")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(text.contains("Connector logs"));
+    assert!(text.contains("demo-connector"));
+    assert!(text.contains("Refresh Logs"));
+    assert!(text.contains("/c/test-cluster/control"));
+}
+
+#[tokio::test]
+async fn sidebar_lists_multiple_clusters() {
+    use strimzi_ops_core::ConnectCluster;
+
+    let state = AppState::new(vec![
+        ConnectCluster {
+            id: "local".to_owned(),
+            settings: ConnectionSettings::default(),
+        },
+        ConnectCluster {
+            id: "prod".to_owned(),
+            settings: ConnectionSettings::default(),
+        },
+    ]);
+    let response = router(state)
         .oneshot(
             Request::builder()
-                .uri("/control/demo-connector/logs")
+                .uri("/c/prod/dashboard")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -125,7 +169,6 @@ async fn control_logs_route_returns_page() {
         .await
         .unwrap();
     let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("Connector logs"));
-    assert!(text.contains("demo-connector"));
-    assert!(text.contains("Refresh Logs"));
+    assert!(text.contains("/c/local/dashboard"));
+    assert!(text.contains("/c/prod/dashboard"));
 }

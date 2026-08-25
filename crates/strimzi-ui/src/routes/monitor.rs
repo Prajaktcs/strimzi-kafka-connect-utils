@@ -1,10 +1,11 @@
 use std::time::Duration;
 
-use axum::extract::{Form, State};
+use axum::extract::{Form, Path, State};
 use serde::Deserialize;
 use strimzi_ops_core::{NotificationMonitor, SnapshotTracker};
 
 use crate::blocking::spawn_blocking;
+use crate::routes::ClusterPath;
 use crate::state::AppState;
 use crate::views::{
     render, HtmlResult, MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCard,
@@ -16,12 +17,14 @@ const MIN_DURATION: u64 = 10;
 const MAX_DURATION: u64 = 300;
 const DEFAULT_GROUP_ID: &str = "strimzi-ops-monitor";
 
-pub async fn monitor(State(state): State<AppState>) -> HtmlResult {
-    if state.bootstrap_servers().is_none() {
-        return render(MissingBootstrapPage { active: "monitor" });
+pub async fn monitor(State(state): State<AppState>, Path(path): Path<ClusterPath>) -> HtmlResult {
+    let cluster = state.cluster(&path.cluster)?;
+    let nav = state.nav("monitor", &path.cluster);
+    if cluster.settings.bootstrap_servers.is_none() {
+        return render(MissingBootstrapPage { nav });
     }
     render(MonitorPage {
-        active: "monitor",
+        nav,
         topic: DEFAULT_TOPIC.to_owned(),
         duration: DEFAULT_DURATION,
         error: None,
@@ -36,16 +39,19 @@ pub struct MonitorForm {
 
 pub async fn monitor_submit(
     State(state): State<AppState>,
+    Path(path): Path<ClusterPath>,
     Form(form): Form<MonitorForm>,
 ) -> HtmlResult {
-    let Some(bootstrap) = state.bootstrap_servers() else {
-        return render(MissingBootstrapPage { active: "monitor" });
+    let cluster = state.cluster(&path.cluster)?;
+    let nav = state.nav("monitor", &path.cluster);
+    let Some(bootstrap) = cluster.settings.bootstrap_servers.clone() else {
+        return render(MissingBootstrapPage { nav });
     };
 
     let topic = form.topic.trim().to_owned();
     if topic.is_empty() {
         return render(MonitorPage {
-            active: "monitor",
+            nav,
             topic: DEFAULT_TOPIC.to_owned(),
             duration: form.duration.clamp(MIN_DURATION, MAX_DURATION),
             error: Some("Notification topic is required".to_owned()),
@@ -58,7 +64,7 @@ pub async fn monitor_submit(
         spawn_blocking(move || run_monitor_session(bootstrap, topic_for_run, duration)).await?;
 
     render(MonitorResultsPage {
-        active: "monitor",
+        nav,
         topic,
         duration,
         snapshots: cards,

@@ -55,6 +55,15 @@ pub enum Error {
     #[error("cannot load secrets from {path}: {reason}")]
     Secrets { path: PathBuf, reason: String },
 
+    #[error("cannot load KafkaConnect resources from Kubernetes: {reason}")]
+    KubernetesDiscover { reason: String },
+
+    #[error("unknown Connect cluster '{id}'")]
+    UnknownCluster { id: String },
+
+    #[error("multiple Connect clusters loaded ({count}); pass --cluster <id>")]
+    MultipleClusters { count: usize },
+
     #[error("missing connection setting: {option}")]
     MissingSetting { option: String },
 
@@ -70,5 +79,5 @@ pub use k8s::{connect_label_selector, fetch_logs, filter_log_lines};
 pub use linter::{ConnectorLinter, LintResult, LinterConfig, Severity, Summary};
 pub use monitor::{NotificationMonitor, SnapshotState, SnapshotTracker};
 pub use parse::{parse_config_text, ConfigFormat};
-pub use settings::{load_settings, ConnectionSettings};
+pub use settings::{load_clusters, load_settings, ConnectCluster, ConnectionSettings, LoadConfig};
 pub use validate::{validate_config, validate_text, ValidationReport};

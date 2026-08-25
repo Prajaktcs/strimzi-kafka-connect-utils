@@ -8,7 +8,7 @@
 <div class="error">{{ err }}</div>
 {% endif %}
 
-<form class="stack" method="post" action="/monitor">
+<form class="stack" method="post" action="/c/{{ nav.cluster_id }}/monitor">
   <label>
     Notification Topic
     <input type="text" name="topic" value="{{ topic }}" required>

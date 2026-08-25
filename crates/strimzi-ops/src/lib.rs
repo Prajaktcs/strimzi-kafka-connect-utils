@@ -19,7 +19,7 @@ use strimzi_ops_core::{
 
 use crate::error::Error;
 use crate::result::Result;
-use crate::settings::load_settings;
+use crate::settings::LoadConfig;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -43,6 +43,18 @@ pub struct Cli {
     /// Strimzi `KafkaConnect` cluster name (for YAML export)
     #[arg(long = "cluster-name", global = true)]
     pub cluster_name: Option<String>,
+
+    /// Connect cluster id when several `KafkaConnect` CRs (or `[[clusters]]`) are loaded
+    #[arg(long = "cluster", global = true)]
+    pub cluster: Option<String>,
+
+    /// Discover Connect clusters from `KafkaConnect` custom resources
+    #[arg(long = "from-k8s", global = true)]
+    pub from_k8s: bool,
+
+    /// Namespace for `--from-k8s` (default: all namespaces)
+    #[arg(long = "k8s-namespace", global = true)]
+    pub k8s_namespace: Option<String>,
 
     #[command(subcommand)]
     pub command: Commands,
@@ -202,8 +214,21 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
         connect_url,
         bootstrap_servers,
         cluster_name,
+        cluster,
+        from_k8s,
+        k8s_namespace,
         command,
     } = cli;
+
+    let load = LoadConfig {
+        secrets,
+        connect_url,
+        bootstrap_servers,
+        cluster_name,
+        cluster_id: cluster,
+        from_k8s,
+        k8s_namespace,
+    };
 
     match command {
         // Lint does not need Connect/Kafka settings; skip secrets.toml so a broken
@@ -216,32 +241,17 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
             strict,
         } => lint_command(&file, config.as_deref(), format, json_output, strict),
         Commands::Connectors { command } => {
-            let settings = load_settings(
-                secrets.as_deref(),
-                connect_url,
-                bootstrap_servers,
-                cluster_name,
-            )?;
+            let settings = load.load_settings()?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             connectors_command(&client, command, &settings)
         }
         Commands::Cluster { command } => {
-            let settings = load_settings(
-                secrets.as_deref(),
-                connect_url,
-                bootstrap_servers,
-                cluster_name,
-            )?;
+            let settings = load.load_settings()?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             cluster_command(&client, command)
         }
         Commands::Snapshot { command } => {
-            let settings = load_settings(
-                secrets.as_deref(),
-                connect_url,
-                bootstrap_servers,
-                cluster_name,
-            )?;
+            let settings = load.load_settings()?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             snapshot_command(&client, command, &settings)
         }
@@ -251,12 +261,7 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
             duration_secs,
             json_output,
         } => {
-            let settings = load_settings(
-                secrets.as_deref(),
-                connect_url,
-                bootstrap_servers,
-                cluster_name,
-            )?;
+            let settings = load.load_settings()?;
             monitor_command(&settings, &topic, &group_id, duration_secs, json_output)
         }
     }

@@ -11,10 +11,18 @@
   <div class="layout">
     <aside class="sidebar">
       <h1 class="brand">Strimzi Ops</h1>
+      {% if !nav.clusters.is_empty() %}
+      <p class="cluster-label">Cluster</p>
+      <nav class="clusters" aria-label="Connect clusters">
+        {% for c in nav.clusters %}
+        <a href="/c/{{ c.id }}/{{ nav.active }}" class="{% if c.id == nav.cluster_id %}active{% endif %}">{{ c.label }}</a>
+        {% endfor %}
+      </nav>
+      {% endif %}
       <nav>
-        <a href="/dashboard" class="{% if active == "dashboard" %}active{% endif %}">Dashboard</a>
-        <a href="/monitor" class="{% if active == "monitor" %}active{% endif %}">Monitor</a>
-        <a href="/control" class="{% if active == "control" %}active{% endif %}">Control</a>
+        <a href="/c/{{ nav.cluster_id }}/dashboard" class="{% if nav.active == "dashboard" %}active{% endif %}">Dashboard</a>
+        <a href="/c/{{ nav.cluster_id }}/monitor" class="{% if nav.active == "monitor" %}active{% endif %}">Monitor</a>
+        <a href="/c/{{ nav.cluster_id }}/control" class="{% if nav.active == "control" %}active{% endif %}">Control</a>
       </nav>
       <p class="about">Kafka Connect management (Rust UI)</p>
     </aside>

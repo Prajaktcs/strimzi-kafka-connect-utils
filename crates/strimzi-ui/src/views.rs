@@ -11,6 +11,7 @@ impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let status = match &self {
             Self::ConfigRequired => StatusCode::SERVICE_UNAVAILABLE,
+            Self::UnknownCluster { .. } => StatusCode::NOT_FOUND,
             Self::Json { .. } => StatusCode::BAD_REQUEST,
             Self::Core(strimzi_ops_core::Error::ConnectHttp { .. }) => StatusCode::BAD_GATEWAY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -18,7 +19,7 @@ impl IntoResponse for Error {
         let body = format!(
             "<html><body style=\"font-family: sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem;\">\
              <h1>Error</h1><pre style=\"white-space: pre-wrap;\">{self}</pre>\
-             <p><a href=\"/dashboard\">Back to Dashboard</a></p>\
+             <p><a href=\"/\">Back to Dashboard</a></p>\
              <p>If Connect is down locally, start port-forwards with <code>just port-forward-all</code> \
              (or <code>just setup</code> for a full local stack), then refresh.</p>\
              </body></html>"
@@ -38,22 +39,35 @@ pub fn render<T: Template>(template: T) -> HtmlResult {
     Ok(Html(body).into_response())
 }
 
+#[derive(Debug, Clone)]
+pub struct ClusterChoice {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NavContext {
+    pub active: &'static str,
+    pub cluster_id: String,
+    pub clusters: Vec<ClusterChoice>,
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "missing_config.html")]
 pub struct MissingConfigPage {
-    pub active: &'static str,
+    pub nav: NavContext,
 }
 
 #[derive(Template, WebTemplate)]
 #[template(path = "missing_bootstrap.html")]
 pub struct MissingBootstrapPage {
-    pub active: &'static str,
+    pub nav: NavContext,
 }
 
 #[derive(Template, WebTemplate)]
 #[template(path = "monitor.html")]
 pub struct MonitorPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub topic: String,
     pub duration: u64,
     pub error: Option<String>,
@@ -69,7 +83,7 @@ pub struct SnapshotCard {
 #[derive(Template, WebTemplate)]
 #[template(path = "monitor_results.html")]
 pub struct MonitorResultsPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub topic: String,
     pub duration: u64,
     pub snapshots: Vec<SnapshotCard>,
@@ -109,7 +123,7 @@ pub struct ConnectorSummary {
 #[derive(Template, WebTemplate)]
 #[template(path = "dashboard.html")]
 pub struct DashboardPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub version: String,
     pub kafka_cluster_id: String,
     pub plugins: usize,
@@ -132,7 +146,7 @@ pub struct ControlRow {
 #[derive(Template, WebTemplate)]
 #[template(path = "control.html")]
 pub struct ControlPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub connectors: Vec<ControlRow>,
     pub flash: Option<String>,
     pub focus: Option<String>,
@@ -141,7 +155,7 @@ pub struct ControlPage {
 #[derive(Template, WebTemplate)]
 #[template(path = "snapshot.html")]
 pub struct SnapshotPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub name: String,
     pub flash: Option<String>,
 }
@@ -149,7 +163,7 @@ pub struct SnapshotPage {
 #[derive(Template, WebTemplate)]
 #[template(path = "yaml.html")]
 pub struct YamlPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub name: String,
     pub yaml: String,
 }
@@ -157,7 +171,7 @@ pub struct YamlPage {
 #[derive(Template, WebTemplate)]
 #[template(path = "logs.html")]
 pub struct LogsPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub name: String,
     pub log_text: String,
 }
@@ -165,7 +179,7 @@ pub struct LogsPage {
 #[derive(Template, WebTemplate)]
 #[template(path = "edit.html")]
 pub struct EditPage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub name: String,
     pub config_json: String,
     pub validation_error: Option<String>,
@@ -175,7 +189,7 @@ pub struct EditPage {
 #[derive(Template, WebTemplate)]
 #[template(path = "create.html")]
 pub struct CreatePage {
-    pub active: &'static str,
+    pub nav: NavContext,
     pub config_json: String,
     pub flash: Option<String>,
     pub error: Option<String>,

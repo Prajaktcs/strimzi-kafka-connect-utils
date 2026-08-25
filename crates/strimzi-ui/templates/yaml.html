@@ -4,7 +4,7 @@
 <h2>Strimzi KafkaConnector YAML: {{ name }}</h2>
 <pre class="code">{{ yaml }}</pre>
 <p class="row">
-  <a class="button" href="/control/{{ name }}/yaml/download">Download YAML</a>
-  <a class="button secondary" href="/control?focus={{ name }}">Back</a>
+  <a class="button" href="/c/{{ nav.cluster_id }}/control/{{ name }}/yaml/download">Download YAML</a>
+  <a class="button secondary" href="/c/{{ nav.cluster_id }}/control?focus={{ name }}">Back</a>
 </p>
 {% endblock %}

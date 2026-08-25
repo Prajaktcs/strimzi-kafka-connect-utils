@@ -12,22 +12,32 @@ use strimzi_ops_core::{
 
 use crate::blocking::{spawn_blocking, with_connect_client};
 use crate::error::Error;
+use crate::paths;
+use crate::routes::{ClusterPath, ConnectorPath};
 use crate::state::AppState;
 use crate::views::{
     redirect, render, ControlPage, ControlRow, CreatePage, EditPage, HtmlResult, LogsPage,
-    MissingConfigPage, SnapshotPage, YamlPage,
+    MissingConfigPage, NavContext, SnapshotPage, YamlPage,
 };
 
 pub async fn control_list(
     State(state): State<AppState>,
+    Path(path): Path<ClusterPath>,
     Query(query): Query<ControlQuery>,
 ) -> HtmlResult {
-    if !state.has_connect_url() {
-        return render(MissingConfigPage { active: "control" });
+    let cluster = state.cluster(&path.cluster)?;
+    let nav = state.nav("control", &path.cluster);
+    if cluster.settings.connect_url.is_none() {
+        return render(MissingConfigPage { nav });
     }
 
-    let url = state.require_connect_url()?;
-    let page = with_connect_client(url, move |client| build_control_page(client, query)).await?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
+    let page =
+        with_connect_client(url, move |client| build_control_page(client, query, nav)).await?;
     render(page)
 }
 
@@ -40,6 +50,7 @@ pub struct ControlQuery {
 fn build_control_page(
     client: &ConnectClient,
     query: ControlQuery,
+    nav: NavContext,
 ) -> crate::result::Result<ControlPage> {
     let all = client.get_all_connectors_status()?;
     let mut connectors = Vec::new();
@@ -70,7 +81,7 @@ fn build_control_page(
     }
     connectors.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(ControlPage {
-        active: "control",
+        nav,
         connectors,
         flash: query.flash,
         focus: query.focus,
@@ -79,45 +90,63 @@ fn build_control_page(
 
 pub async fn pause_connector(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(path): Path<ConnectorPath>,
 ) -> HtmlResult {
-    lifecycle_action(state, name, ConnectClient::pause_connector, "Paused").await
+    lifecycle_action(state, path, ConnectClient::pause_connector, "Paused").await
 }
 
 pub async fn resume_connector(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(path): Path<ConnectorPath>,
 ) -> HtmlResult {
-    lifecycle_action(state, name, ConnectClient::resume_connector, "Resumed").await
+    lifecycle_action(state, path, ConnectClient::resume_connector, "Resumed").await
 }
 
 pub async fn restart_connector(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(path): Path<ConnectorPath>,
 ) -> HtmlResult {
-    lifecycle_action(state, name, ConnectClient::restart_connector, "Restarted").await
+    lifecycle_action(state, path, ConnectClient::restart_connector, "Restarted").await
 }
 
-async fn lifecycle_action<F>(state: AppState, name: String, action: F, verb: &str) -> HtmlResult
+async fn lifecycle_action<F>(
+    state: AppState,
+    path: ConnectorPath,
+    action: F,
+    verb: &str,
+) -> HtmlResult
 where
     F: FnOnce(&ConnectClient, &str) -> strimzi_ops_core::Result<()> + Send + 'static,
 {
-    let url = state.require_connect_url()?;
+    let cluster = state.cluster(&path.cluster)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
+    let name = path.name.clone();
+    let cluster_id = path.cluster.clone();
     let name_for_msg = name.clone();
     with_connect_client(url, move |client| {
         action(client, &name)?;
         Ok(())
     })
     .await?;
-    Ok(redirect(&format!(
-        "/control?flash={verb}%20{name_for_msg}&focus={name_for_msg}"
+    Ok(redirect(&paths::control_focus(
+        &cluster_id,
+        &name_for_msg,
+        Some(&format!("{verb}%20{name_for_msg}")),
     )))
 }
 
-pub async fn snapshot_form(Path(name): Path<String>) -> HtmlResult {
+pub async fn snapshot_form(
+    State(state): State<AppState>,
+    Path(path): Path<ConnectorPath>,
+) -> HtmlResult {
+    let nav = state.nav("control", &path.cluster);
     render(SnapshotPage {
-        active: "control",
-        name,
+        nav,
+        name: path.name,
         flash: None,
     })
 }
@@ -130,11 +159,16 @@ pub struct SnapshotForm {
 
 pub async fn snapshot_submit(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(path): Path<ConnectorPath>,
     Form(form): Form<SnapshotForm>,
 ) -> HtmlResult {
-    let url = state.require_connect_url()?;
-    let bootstrap = state.bootstrap_servers();
+    let cluster = state.cluster(&path.cluster)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
+    let bootstrap = cluster.settings.bootstrap_servers.clone();
     let tables: Option<Vec<String>> = form.tables.as_ref().map(|raw| {
         raw.split(',')
             .map(str::trim)
@@ -143,6 +177,8 @@ pub async fn snapshot_submit(
             .collect()
     });
     let snapshot_type = form.snapshot_type.clone();
+    let name = path.name.clone();
+    let cluster_id = path.cluster.clone();
     let name_clone = name.clone();
 
     let result = with_connect_client(url, move |client| {
@@ -152,20 +188,31 @@ pub async fn snapshot_submit(
     .await?;
 
     let msg = urlencoding_encode(&format!("Snapshot {}: {}", result.status, result.message));
-    Ok(redirect(&format!("/control?flash={msg}&focus={name}")))
+    Ok(redirect(&paths::control_focus(
+        &cluster_id,
+        &name,
+        Some(&msg),
+    )))
 }
 
-pub async fn yaml_view(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {
-    let yaml = load_yaml(&state, &name).await?;
+pub async fn yaml_view(
+    State(state): State<AppState>,
+    Path(path): Path<ConnectorPath>,
+) -> HtmlResult {
+    let yaml = load_yaml(&state, &path.cluster, &path.name).await?;
+    let nav = state.nav("control", &path.cluster);
     render(YamlPage {
-        active: "control",
-        name,
+        nav,
+        name: path.name,
         yaml,
     })
 }
 
-pub async fn yaml_download(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    match load_yaml(&state, &name).await {
+pub async fn yaml_download(
+    State(state): State<AppState>,
+    Path(path): Path<ConnectorPath>,
+) -> Response {
+    match load_yaml(&state, &path.cluster, &path.name).await {
         Ok(yaml) => {
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -173,7 +220,7 @@ pub async fn yaml_download(State(state): State<AppState>, Path(name): Path<Strin
                 HeaderValue::from_static("text/yaml; charset=utf-8"),
             );
             if let Ok(value) =
-                HeaderValue::from_str(&format!("attachment; filename=\"{name}.yaml\""))
+                HeaderValue::from_str(&format!("attachment; filename=\"{}.yaml\"", path.name))
             {
                 headers.insert(header::CONTENT_DISPOSITION, value);
             }
@@ -183,32 +230,62 @@ pub async fn yaml_download(State(state): State<AppState>, Path(name): Path<Strin
     }
 }
 
-async fn load_yaml(state: &AppState, name: &str) -> crate::result::Result<String> {
-    let url = state.require_connect_url()?;
-    let cluster = state.cluster_name().to_owned();
+async fn load_yaml(
+    state: &AppState,
+    cluster_id: &str,
+    name: &str,
+) -> crate::result::Result<String> {
+    let cluster = state.cluster(cluster_id)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
+    let k8s_cluster = cluster.settings.cluster_name().to_owned();
     let name_clone = name.to_owned();
     with_connect_client(url, move |client| {
         let config = client.get_connector_config(&name_clone)?;
-        Ok(to_strimzi_yaml(&name_clone, &config, &cluster))
+        Ok(to_strimzi_yaml(&name_clone, &config, &k8s_cluster))
     })
     .await
 }
 
-pub async fn logs_view(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {
-    let cluster = state.cluster_name().to_owned();
-    let filter = name.clone();
-    let log_text =
-        spawn_blocking(move || Ok(fetch_logs(&cluster, 100, Some(filter.as_str()))?)).await?;
+pub async fn logs_view(
+    State(state): State<AppState>,
+    Path(path): Path<ConnectorPath>,
+) -> HtmlResult {
+    let cluster = state.cluster(&path.cluster)?;
+    let k8s_cluster = cluster.settings.cluster_name().to_owned();
+    let namespace = cluster.settings.namespace.clone();
+    let filter = path.name.clone();
+    let log_text = spawn_blocking(move || {
+        Ok(fetch_logs(
+            &k8s_cluster,
+            namespace.as_deref(),
+            100,
+            Some(filter.as_str()),
+        )?)
+    })
+    .await?;
+    let nav = state.nav("control", &path.cluster);
     render(LogsPage {
-        active: "control",
-        name,
+        nav,
+        name: path.name,
         log_text,
     })
 }
 
-pub async fn edit_form(State(state): State<AppState>, Path(name): Path<String>) -> HtmlResult {
-    let url = state.require_connect_url()?;
-    let name_clone = name.clone();
+pub async fn edit_form(
+    State(state): State<AppState>,
+    Path(path): Path<ConnectorPath>,
+) -> HtmlResult {
+    let cluster = state.cluster(&path.cluster)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
+    let name_clone = path.name.clone();
     let config = with_connect_client(url, move |client| {
         Ok(client.get_connector_config(&name_clone)?)
     })
@@ -216,9 +293,10 @@ pub async fn edit_form(State(state): State<AppState>, Path(name): Path<String>) 
     let config_json = serde_json::to_string_pretty(&config).map_err(|err| Error::Json {
         reason: err.to_string(),
     })?;
+    let nav = state.nav("control", &path.cluster);
     render(EditPage {
-        active: "control",
-        name,
+        nav,
+        name: path.name,
         config_json,
         validation_error: None,
         flash: None,
@@ -233,16 +311,23 @@ pub struct EditForm {
 
 pub async fn edit_submit(
     State(state): State<AppState>,
-    Path(name): Path<String>,
+    Path(path): Path<ConnectorPath>,
     Form(form): Form<EditForm>,
 ) -> HtmlResult {
-    let url = state.require_connect_url()?;
+    let cluster = state.cluster(&path.cluster)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
     let parsed: Map<String, Value> =
         serde_json::from_str(&form.config_json).map_err(|err| Error::Json {
             reason: err.to_string(),
         })?;
 
     let force = form.force.as_deref() == Some("1");
+    let name = path.name.clone();
+    let cluster_id = path.cluster.clone();
     let name_clone = name.clone();
     let config_json = form.config_json.clone();
 
@@ -260,19 +345,24 @@ pub async fn edit_submit(
     .await?;
 
     match outcome {
-        EditOutcome::Updated => Ok(redirect(&format!(
-            "/control?flash=Updated%20{name}&focus={name}"
+        EditOutcome::Updated => Ok(redirect(&paths::control_focus(
+            &cluster_id,
+            &name,
+            Some(&format!("Updated%20{name}")),
         ))),
         EditOutcome::Invalid {
             formatted,
             config_json,
-        } => render(EditPage {
-            active: "control",
-            name,
-            config_json,
-            validation_error: Some(formatted),
-            flash: None,
-        }),
+        } => {
+            let nav = state.nav("control", &cluster_id);
+            render(EditPage {
+                nav,
+                name,
+                config_json,
+                validation_error: Some(formatted),
+                flash: None,
+            })
+        }
     }
 }
 
@@ -284,9 +374,13 @@ enum EditOutcome {
     },
 }
 
-pub async fn create_form() -> HtmlResult {
+pub async fn create_form(
+    State(state): State<AppState>,
+    Path(path): Path<ClusterPath>,
+) -> HtmlResult {
+    let nav = state.nav("control", &path.cluster);
     render(CreatePage {
-        active: "control",
+        nav,
         config_json: "{\n  \"name\": \"my-connector\",\n  \"config\": {\n  }\n}".to_owned(),
         flash: None,
         error: None,
@@ -300,15 +394,22 @@ pub struct CreateForm {
 
 pub async fn create_submit(
     State(state): State<AppState>,
+    Path(path): Path<ClusterPath>,
     Form(form): Form<CreateForm>,
 ) -> HtmlResult {
-    let url = state.require_connect_url()?;
+    let cluster = state.cluster(&path.cluster)?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
     let value: Value = serde_json::from_str(&form.config_json).map_err(|err| Error::Json {
         reason: err.to_string(),
     })?;
 
     let request = create_request_from_value(value).map_err(|reason| Error::Json { reason })?;
     let name = request.name.clone();
+    let cluster_id = path.cluster.clone();
 
     with_connect_client(url, move |client| {
         client.create_connector(&request)?;
@@ -316,8 +417,10 @@ pub async fn create_submit(
     })
     .await?;
 
-    Ok(redirect(&format!(
-        "/control?flash=Created%20{name}&focus={name}"
+    Ok(redirect(&paths::control_focus(
+        &cluster_id,
+        &name,
+        Some(&format!("Created%20{name}")),
     )))
 }
 

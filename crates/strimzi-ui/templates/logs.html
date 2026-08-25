@@ -5,8 +5,8 @@
 <p class="lede">Showing recent Kafka Connect pod logs filtered for <code>{{ name }}</code></p>
 
 <div class="row">
-  <a class="button" href="/control/{{ name }}/logs">Refresh Logs</a>
-  <a class="button secondary" href="/control">Back to Control</a>
+  <a class="button" href="/c/{{ nav.cluster_id }}/control/{{ name }}/logs">Refresh Logs</a>
+  <a class="button secondary" href="/c/{{ nav.cluster_id }}/control">Back to Control</a>
 </div>
 
 <pre>{{ log_text }}</pre>

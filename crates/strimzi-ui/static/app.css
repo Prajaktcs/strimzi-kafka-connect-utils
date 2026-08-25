@@ -33,6 +33,14 @@ body {
 }
 .brand { margin: 0 0 1.5rem; font-size: 1.2rem; letter-spacing: 0.02em; }
 .sidebar nav { display: grid; gap: 0.4rem; }
+.cluster-label {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9bb5a8;
+}
+.sidebar nav.clusters { margin-bottom: 1.1rem; }
 .sidebar a {
   color: #d5e7de;
   text-decoration: none;

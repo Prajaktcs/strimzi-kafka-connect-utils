@@ -29,7 +29,7 @@
       <li>{{ item.state }}: {{ item.count }}</li>
       {% endfor %}
     </ul>
-    <p><a class="button" href="/monitor">Open Monitor</a></p>
+    <p><a class="button" href="/c/{{ nav.cluster_id }}/monitor">Open Monitor</a></p>
   </section>
   <section>
     <h3>Failed connectors / tasks</h3>
@@ -65,7 +65,7 @@
         <td>{{ c.connector_type }}</td>
         <td>{{ c.state }}</td>
         <td>{{ c.tasks_running }}/{{ c.tasks_total }}</td>
-        <td><a href="/control?focus={{ c.name }}">Manage</a></td>
+        <td><a href="/c/{{ nav.cluster_id }}/control?focus={{ c.name }}">Manage</a></td>
       </tr>
       {% endfor %}
     </tbody>

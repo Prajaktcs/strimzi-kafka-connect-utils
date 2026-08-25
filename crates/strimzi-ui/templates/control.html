@@ -8,7 +8,7 @@
 <div class="flash">{{ msg }}</div>
 {% endif %}
 
-<p><a class="button" href="/control/create">Create connector</a></p>
+<p><a class="button" href="/c/{{ nav.cluster_id }}/control/create">Create connector</a></p>
 
 {% if connectors.is_empty() %}
 <p>No connectors found</p>
@@ -25,15 +25,15 @@
       <td>{{ c.tasks_running }}/{{ c.tasks_total }}</td>
       <td class="actions">
         {% if c.state == "PAUSED" || c.state == "STOPPED" %}
-        <form method="post" action="/control/{{ c.name }}/resume"><button type="submit">Resume</button></form>
+        <form method="post" action="/c/{{ nav.cluster_id }}/control/{{ c.name }}/resume"><button type="submit">Resume</button></form>
         {% else %}
-        <form method="post" action="/control/{{ c.name }}/pause"><button type="submit">Pause</button></form>
+        <form method="post" action="/c/{{ nav.cluster_id }}/control/{{ c.name }}/pause"><button type="submit">Pause</button></form>
         {% endif %}
-        <form method="post" action="/control/{{ c.name }}/restart"><button type="submit">Restart</button></form>
-        <a class="button secondary" href="/control/{{ c.name }}/snapshot">Snapshot</a>
-        <a class="button secondary" href="/control/{{ c.name }}/yaml">YAML</a>
-        <a class="button secondary" href="/control/{{ c.name }}/edit">Edit</a>
-        <a class="button secondary" href="/control/{{ c.name }}/logs">Logs</a>
+        <form method="post" action="/c/{{ nav.cluster_id }}/control/{{ c.name }}/restart"><button type="submit">Restart</button></form>
+        <a class="button secondary" href="/c/{{ nav.cluster_id }}/control/{{ c.name }}/snapshot">Snapshot</a>
+        <a class="button secondary" href="/c/{{ nav.cluster_id }}/control/{{ c.name }}/yaml">YAML</a>
+        <a class="button secondary" href="/c/{{ nav.cluster_id }}/control/{{ c.name }}/edit">Edit</a>
+        <a class="button secondary" href="/c/{{ nav.cluster_id }}/control/{{ c.name }}/logs">Logs</a>
       </td>
     </tr>
     {% endfor %}

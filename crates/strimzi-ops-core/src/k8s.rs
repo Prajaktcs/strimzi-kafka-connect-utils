@@ -35,37 +35,31 @@ pub fn filter_log_lines(output: &str, filter_text: &str) -> String {
 ///
 /// Runs `kubectl logs -l ... --tail N --prefix=true`. Failures and empty
 /// output return user-facing messages (same behaviour as the Python helper).
-pub fn fetch_logs(cluster_name: &str, lines: u32, filter_text: Option<&str>) -> Result<String> {
+pub fn fetch_logs(
+    cluster_name: &str,
+    namespace: Option<&str>,
+    lines: u32,
+    filter_text: Option<&str>,
+) -> Result<String> {
     let selector = connect_label_selector(cluster_name);
-    let output = Command::new("kubectl")
-        .args([
-            "logs",
-            "-l",
-            &selector,
-            "--tail",
-            &lines.to_string(),
-            "--prefix=true",
-        ])
-        .output()
-        .map_err(|source| Error::Kubectl {
-            reason: format!("failed to run kubectl: {source}"),
-        })?;
+    let mut command = Command::new("kubectl");
+    command.args([
+        "logs",
+        "-l",
+        &selector,
+        "--tail",
+        &lines.to_string(),
+        "--prefix=true",
+    ]);
+    if let Some(namespace) = namespace {
+        command.args(["-n", namespace]);
+    }
+    let output = command.output().map_err(|source| Error::Kubectl {
+        reason: format!("failed to run kubectl: {source}"),
+    })?;
 
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let detail = err.trim();
-        let detail = if detail.is_empty() {
-            out.trim()
-        } else {
-            detail
-        };
-        let detail = if detail.is_empty() {
-            format!("kubectl exited with {}", output.status)
-        } else {
-            detail.to_owned()
-        };
-        return Ok(format!("Failed to fetch logs: {detail}"));
+        return Ok(format!("Failed to fetch logs: {}", kubectl_detail(&output)));
     }
 
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -78,6 +72,51 @@ pub fn fetch_logs(cluster_name: &str, lines: u32, filter_text: Option<&str>) -> 
         Ok("No logs returned".to_owned())
     } else {
         Ok(text)
+    }
+}
+
+/// Annotation on a `KafkaConnect` CR for a REST URL reachable from this process
+/// (Ingress, `LoadBalancer`, or port-forward). Without it, the in-cluster Service
+/// DNS name is used.
+pub const CONNECT_URL_ANNOTATION: &str = "strimzi-ops.io/connect-url";
+
+/// `kubectl get kafkaconnect` JSON.
+///
+/// When `namespace` is `None`, lists across all namespaces (`-A`).
+pub fn fetch_kafkaconnect_list(namespace: Option<&str>) -> Result<serde_json::Value> {
+    let mut command = Command::new("kubectl");
+    command.args(["get", "kafkaconnect", "-o", "json"]);
+    if let Some(namespace) = namespace {
+        command.args(["-n", namespace]);
+    } else {
+        command.arg("-A");
+    }
+    let output = command.output().map_err(|source| Error::Kubectl {
+        reason: format!("failed to run kubectl: {source}"),
+    })?;
+    if !output.status.success() {
+        return Err(Error::KubernetesDiscover {
+            reason: kubectl_detail(&output),
+        });
+    }
+    serde_json::from_slice(&output.stdout).map_err(|err| Error::KubernetesDiscover {
+        reason: format!("cannot parse kubectl JSON: {err}"),
+    })
+}
+
+fn kubectl_detail(output: &std::process::Output) -> String {
+    let err = String::from_utf8_lossy(&output.stderr);
+    let out = String::from_utf8_lossy(&output.stdout);
+    let detail = err.trim();
+    let detail = if detail.is_empty() {
+        out.trim()
+    } else {
+        detail
+    };
+    if detail.is_empty() {
+        format!("kubectl exited with {}", output.status)
+    } else {
+        detail.to_owned()
     }
 }
 

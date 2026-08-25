@@ -11,7 +11,7 @@
   <pre>{{ err }}</pre>
 </div>
 {% endif %}
-<form method="post" action="/control/{{ name }}/edit" class="stack">
+<form method="post" action="/c/{{ nav.cluster_id }}/control/{{ name }}/edit" class="stack">
   <label>JSON configuration
     <textarea name="config_json" rows="20">{{ config_json }}</textarea>
   </label>
@@ -20,7 +20,7 @@
     {% if validation_error.is_some() %}
     <button type="submit" name="force" value="1">Update anyway</button>
     {% endif %}
-    <a class="button secondary" href="/control?focus={{ name }}">Cancel</a>
+    <a class="button secondary" href="/c/{{ nav.cluster_id }}/control?focus={{ name }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

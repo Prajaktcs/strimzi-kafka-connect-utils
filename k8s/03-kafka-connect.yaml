@@ -6,6 +6,8 @@ metadata:
   namespace: kafka
   annotations:
     strimzi.io/use-connector-resources: "true"
+    # Optional: REST URL for strimzi-ui / strimzi-ops running outside the cluster
+    # strimzi-ops.io/connect-url: "http://127.0.0.1:8083"
 spec:
   version: 4.3.0
   replicas: 1

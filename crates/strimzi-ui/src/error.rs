@@ -17,6 +17,9 @@ pub enum Error {
     #[error("configuration is required; set --connect-url or kafka.connect_url in secrets.toml")]
     ConfigRequired,
 
+    #[error("unknown Connect cluster '{id}'")]
+    UnknownCluster { id: String },
+
     #[error("internal error: {reason}")]
     Internal { reason: String },
 }

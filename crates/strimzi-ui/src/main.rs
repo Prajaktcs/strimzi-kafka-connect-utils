@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use strimzi_ops_core::load_settings;
+use strimzi_ops_core::LoadConfig;
 use strimzi_ui::AppState;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
@@ -30,6 +30,14 @@ struct Cli {
     #[arg(long = "cluster-name")]
     cluster_name: Option<String>,
 
+    /// Discover Connect clusters from `KafkaConnect` custom resources
+    #[arg(long = "from-k8s")]
+    from_k8s: bool,
+
+    /// Namespace for `--from-k8s` (default: all namespaces)
+    #[arg(long = "k8s-namespace")]
+    k8s_namespace: Option<String>,
+
     /// Bind address
     #[arg(long = "bind", default_value = "127.0.0.1")]
     bind: String,
@@ -52,13 +60,17 @@ async fn main() -> ExitCode {
 
 async fn run() -> strimzi_ui::result::Result<()> {
     let cli = Cli::parse();
-    let settings = load_settings(
-        cli.secrets.as_deref(),
-        cli.connect_url,
-        cli.bootstrap_servers,
-        cli.cluster_name,
-    )?;
-    let state = AppState::new(settings);
+    let clusters = LoadConfig {
+        secrets: cli.secrets,
+        connect_url: cli.connect_url,
+        bootstrap_servers: cli.bootstrap_servers,
+        cluster_name: cli.cluster_name,
+        from_k8s: cli.from_k8s,
+        k8s_namespace: cli.k8s_namespace,
+        ..LoadConfig::default()
+    }
+    .load_clusters()?;
+    let state = AppState::new(clusters);
 
     let static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static");
     let app = strimzi_ui::router(state)

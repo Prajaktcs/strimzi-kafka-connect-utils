@@ -3,9 +3,10 @@
 {% block content %}
 <h2>Configuration required</h2>
 <p>To use Dashboard and Control, provide Kafka Connect settings.</p>
-<pre>[kafka]
+<pre>[[clusters]]
+id = "local"
 bootstrap_servers = "localhost:9092"
 connect_url = "http://localhost:8083"
 connect_cluster_name = "my-connect-cluster"</pre>
-<p>Save as <code>secrets.toml</code>, or pass <code>--connect-url</code> / <code>--secrets</code> to <code>strimzi-ui</code>.</p>
+<p>Save as <code>secrets.toml</code>, or pass <code>--connect-url</code> / <code>--secrets</code> to <code>strimzi-ui</code>. A single <code>[kafka]</code> block still works as one cluster.</p>
 {% endblock %}

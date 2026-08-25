@@ -1,12 +1,14 @@
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 use serde_json::Value;
 
 use crate::blocking::with_connect_client;
+use crate::error::Error;
+use crate::routes::ClusterPath;
 use crate::state::AppState;
 use crate::views::{
     render, ConnectorSummary, DashboardMetrics, DashboardPage, FailedItem, HtmlResult,
-    MissingConfigPage, StatusCount,
+    MissingConfigPage, NavContext, StatusCount,
 };
 use std::collections::BTreeMap;
 
@@ -17,23 +19,29 @@ pub struct FlashQuery {
 
 pub async fn dashboard(
     State(state): State<AppState>,
+    Path(path): Path<ClusterPath>,
     Query(query): Query<FlashQuery>,
 ) -> HtmlResult {
-    if !state.has_connect_url() {
-        return render(MissingConfigPage {
-            active: "dashboard",
-        });
+    let cluster = state.cluster(&path.cluster)?;
+    let nav = state.nav("dashboard", &path.cluster);
+    if cluster.settings.connect_url.is_none() {
+        return render(MissingConfigPage { nav });
     }
 
-    let url = state.require_connect_url()?;
+    let url = cluster
+        .settings
+        .require_connect_url()
+        .map(str::to_owned)
+        .map_err(Error::from)?;
     let flash = query.flash;
-    let page = with_connect_client(url, move |client| build_dashboard(client, flash)).await?;
+    let page = with_connect_client(url, move |client| build_dashboard(client, flash, nav)).await?;
     render(page)
 }
 
 fn build_dashboard(
     client: &strimzi_ops_core::ConnectClient,
     flash: Option<String>,
+    nav: NavContext,
 ) -> crate::result::Result<DashboardPage> {
     let cluster = client.get_cluster_info()?;
     let plugins = client.get_connector_plugins()?;
@@ -106,7 +114,7 @@ fn build_dashboard(
     connectors.sort_by(|a, b| a.name.cmp(&b.name));
 
     Ok(DashboardPage {
-        active: "dashboard",
+        nav,
         version: cluster.version.unwrap_or_else(|| "Unknown".to_owned()),
         kafka_cluster_id: cluster
             .kafka_cluster_id

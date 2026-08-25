@@ -5,7 +5,7 @@
 {% if let Some(msg) = flash %}
 <div class="flash">{{ msg }}</div>
 {% endif %}
-<form method="post" action="/control/{{ name }}/snapshot" class="stack">
+<form method="post" action="/c/{{ nav.cluster_id }}/control/{{ name }}/snapshot" class="stack">
   <label>Snapshot type
     <select name="snapshot_type">
       <option value="incremental" selected>incremental</option>
@@ -17,7 +17,7 @@
   </label>
   <div class="row">
     <button type="submit">Execute snapshot</button>
-    <a class="button secondary" href="/control?focus={{ name }}">Cancel</a>
+    <a class="button secondary" href="/c/{{ nav.cluster_id }}/control?focus={{ name }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

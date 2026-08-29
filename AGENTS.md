@@ -27,13 +27,13 @@ Key data flows:
 - **Connect REST**: `ConnectClient` (`connect/client.rs`) is a **synchronous** reqwest client against port 8083; non-2xx → `Error::ConnectHttp` with a port-forward hint.
 - **Control snapshot**: `SnapshotTrigger` reads `signal.kafka.topic` from the connector config (default `debezium.signals`), produces an `execute-snapshot` signal via rdkafka, and falls back to restarting task 0 on failure (`control/snapshot.rs`).
 - **Monitor**: `NotificationMonitor` (rdkafka `BaseConsumer`) → JSON events → `SnapshotTracker` state machine: STARTED → IN_PROGRESS → COMPLETED/ABORTED (`monitor/`).
-- **UI**: `AppState` holds only `Vec<ConnectCluster>`; each request resolves a cluster then builds a fresh `ConnectClient` inside `tokio::spawn_blocking` — never hold the blocking client across an await (`state.rs`, `blocking.rs`). Routes: `/c/{cluster}/dashboard|monitor|control`; the logs page shells out to `kubectl`.
+- **UI**: `AppState` contains `ConnectionSettings`; each request builds a fresh `ConnectClient` inside `tokio::task::spawn_blocking` — never hold the blocking client across an await (`state.rs`, `blocking.rs`). Routes: `/dashboard`, `/monitor`, and `/control`; the logs page shells out to `kubectl`.
 
 ## Key Directories
 
 - `crates/strimzi-ops-core/src/` — domain library: `linter/` (engine, rules, config, directives), `validate.rs`, `schema.rs`, `parse.rs`, `connect/`, `control/`, `monitor/`, `k8s.rs` (kubectl shell-out), `settings.rs`
 - `crates/strimzi-ops/src/` — CLI: `lib.rs` (clap `Cli` + subcommands), `main.rs`, `bin/strimzi_lint.rs`
-- `crates/strimzi-ui/src/` — `main.rs`, `state.rs`, `blocking.rs`, `routes/` (dashboard/control/monitor), `views.rs` (Askama + Error→HTTP mapping), `paths.rs`
+- `crates/strimzi-ui/src/` — `main.rs`, `state.rs`, `blocking.rs`, `routes/` (dashboard/control/monitor), `views.rs` (Askama + Error→HTTP mapping)
 - `crates/strimzi-ui/tests/http_routes.rs` — sole integration test dir
 - `k8s/` — local-dev stack (namespace `kafka`: Strimzi 1.1.0, Kafka 4.3.0, Connect 4.3.0 with Debezium 3.6.0 + Iceberg sink, Postgres 18.4, Garage S3, Nessie catalog) + `deploy.sh`/`destroy.sh`/`Dockerfile.connect`
 - `scripts/local-dev.sh` — helpers behind the port-forward/secrets/cluster just recipes
@@ -61,9 +61,9 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `
 - Follow Canonical Rust best practices (`docs/rust-best-practices.md`). Workspace lints forbid `unsafe` and enable clippy `pedantic` (allow-list fixed in root `Cargo.toml`). `just rust-check` + `just rust-test` are the pre-finish gate.
 - **Error handling**: concrete `thiserror` enums; no `anyhow`/`Box<dyn Error>` in `strimzi-ops-core`. Core defines `Error` + `Result<T>` in `lib.rs`; each binary crate has an `error.rs` + `result.rs` pair. The UI maps `Error` to HTTP statuses in `views.rs`. Error messages are shaped `cannot …` (lowercase).
 - No `.unwrap()`/`.expect()` outside tests.
-- `mod.rs` files are thin re-exports only — no logic.
+- Keep module wiring small; route definitions live in `crates/strimzi-ui/src/routes/mod.rs`.
 - **Blocking vs async**: `ConnectClient` and rdkafka are synchronous. Only `strimzi-ui` is async (`#[tokio::main]`) and must wrap blocking calls in `with_connect_client`/`spawn_blocking`.
-- **DI & state**: constructor injection (`ConnectClient::new(url)`, `SnapshotTrigger::new(client, bootstrap)`); no global singletons; handlers take `State<AppState>`. Settings come from `LoadConfig` (secrets.toml) + `merge_overrides` + `require_*()` accessors that fail with `MissingSetting`.
+- **DI & state**: constructor injection (`ConnectClient::new(url)`, `SnapshotTrigger::new(client, bootstrap)`); no global singletons; handlers take `State<AppState>`. Settings come from `load_settings` (secrets.toml) + `ConnectionSettings::merge_overrides` + `require_*()` accessors that fail with `MissingSetting`.
 - **Feature gating**: all rdkafka code sits behind the `kafka` cargo feature (default off in core; both binaries enable it). Non-kafka builds compile `#[cfg]` stubs returning `Error::KafkaFeatureDisabled`.
 - Naming: `*Client`/`*Monitor`/`*Tracker`/`*Trigger` for actors, `*Config`, `*Page` (Askama), `*Result`; `HtmlResult` for UI handlers.
 - Style: `?` on golden paths, explicit `Ok(())` on `Result<()>`, prefer `Self` in inherent impls, tight mutability scopes.
@@ -73,7 +73,7 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `
 
 - `Cargo.toml` — workspace members, shared deps, lints (clippy pedantic allow-list)
 - `crates/strimzi-ops-core/src/lib.rs` — core `Error` enum + module map/re-exports
-- `crates/strimzi-ops-core/src/settings.rs` — `secrets.toml` contract (`[kafka]` `connect_url`/`bootstrap_servers`, `[storage]` S3) + CLI overrides
+- `crates/strimzi-ops-core/src/settings.rs` — `secrets.toml` contract (`[kafka]` `connect_url`/`bootstrap_servers`/`connect_cluster_name`) + CLI overrides
 - `crates/strimzi-ops/src/lib.rs` — clap CLI surface (subcommands, global flags)
 - `crates/strimzi-ui/src/main.rs`, `crates/strimzi-ui/src/routes/mod.rs` — server bootstrap, route table
 - `justfile`, `.github/workflows/ci.yml` — local and CI command surface
@@ -85,14 +85,14 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `
 
 - **Rust**: stable toolchain, floor 1.75 (`rust-version`); no pinned `rust-toolchain*` file. Use workspace dependencies (`dep.workspace = true`) and don't pin versions in crate manifests.
 - **Build deps**: rdkafka 0.37 builds from source (`cmake-build` feature) → **cmake required**; CI additionally installs `pkg-config libssl-dev libcurl4-openssl-dev libsasl2-dev libzstd-dev`.
-- **Local stack tooling**: `kubectl` (UI logs, `--from-k8s` discovery), `docker buildx`, and Colima are assumed by the justfile k8s recipes.
+- **Local stack tooling**: `kubectl` (UI logs only), `docker buildx`, and Colima are assumed by the justfile k8s recipes.
 - **No Python** in application code; stale caches (`.mypy_cache/`, `__pycache__/`, …) are gitignored leftovers.
 
 ## Testing & QA
 
 - Run: `just rust-test` (= `cargo test --workspace --all-features`). No coverage expectations.
-- Unit tests: 14 inline `#[cfg(test)]` modules across `strimzi-ops-core` (sync `#[test]`) plus one in `strimzi-ui/src/routes/dashboard.rs`.
-- Connect REST is mocked with **httpmock** (`MockServer` + `mock.assert()`); UI route tests use **tower** `ServiceExt::oneshot` against the axum router in `crates/strimzi-ui/tests/http_routes.rs` (8 `#[tokio::test]`, no real server).
+- Unit tests: 13 inline `#[cfg(test)]` modules across `strimzi-ops-core` (sync `#[test]`) plus one in `strimzi-ui/src/routes/dashboard.rs`.
+- Connect REST is mocked with **httpmock** (`MockServer` + `mock.assert()`); UI route tests use **tower** `ServiceExt::oneshot` against the axum router in `crates/strimzi-ui/tests/http_routes.rs` (6 `#[tokio::test]`, no real server).
 - Fixtures are inline `json!`/string literals; `examples/` files are not test fixtures — CI lints them instead.
 - No `#[ignore]`d or cluster-dependent tests; kafka-feature code is tested via its fallback paths.
 - CI (`.github/workflows/ci.yml`, single `rust` job): `cargo fmt --check` → `clippy -D warnings` → `cargo test` → `strimzi-lint` over every `examples/*.{yaml,yml,json}`.

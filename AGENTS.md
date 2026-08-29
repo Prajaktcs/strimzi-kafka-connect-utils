@@ -24,7 +24,7 @@ Cargo workspace (edition 2021, `rust-version = "1.75"`, resolver 2) with three c
 Key data flows:
 
 - **Lint**: file → `parse_config_text` (YAML→JSON normalization, unwraps `{name, config}` REST payloads) → `ConnectorLinter` (5 built-in rules + `.lintrc.toml` severities/exemptions + inline `# lint-disable:`) → `validate_schema` → `ValidationReport`. Errors fail; warnings fail only with `--strict`; `--json` emits the structured report (`validate.rs`, `linter/`).
-- **Connect REST**: `ConnectClient` (`connect/client.rs`) is a **synchronous** reqwest client against port 8083; non-2xx → `Error::ConnectHttp` with a port-forward hint.
+- **Connect REST**: `ConnectClient` (`connect/client.rs`) is a **synchronous** reqwest client against port 8083; non-2xx responses become `Error::ConnectHttp` with `HTTP <status>: <body>`, while connection and timeout failures include a port-forward hint.
 - **Control snapshot**: `SnapshotTrigger` reads `signal.kafka.topic` from the connector config (default `debezium.signals`), produces an `execute-snapshot` signal via rdkafka, and falls back to restarting task 0 on failure (`control/snapshot.rs`).
 - **Monitor**: `NotificationMonitor` (rdkafka `BaseConsumer`) → JSON events → `SnapshotTracker` state machine: STARTED → IN_PROGRESS → COMPLETED/ABORTED (`monitor/`).
 - **UI**: `AppState` contains `ConnectionSettings`; each request builds a fresh `ConnectClient` inside `tokio::task::spawn_blocking` — never hold the blocking client across an await (`state.rs`, `blocking.rs`). Routes: `/dashboard`, `/monitor`, and `/control`; the logs page shells out to `kubectl`.
@@ -60,7 +60,7 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `
 
 - Follow Canonical Rust best practices (`docs/rust-best-practices.md`). Workspace lints forbid `unsafe` and enable clippy `pedantic` (allow-list fixed in root `Cargo.toml`). `just rust-check` + `just rust-test` are the pre-finish gate.
 - **Error handling**: concrete `thiserror` enums; no `anyhow`/`Box<dyn Error>` in `strimzi-ops-core`. Core defines `Error` + `Result<T>` in `lib.rs`; each binary crate has an `error.rs` + `result.rs` pair. The UI maps `Error` to HTTP statuses in `views.rs`. Error messages are shaped `cannot …` (lowercase).
-- No `.unwrap()`/`.expect()` outside tests.
+- Avoid `.unwrap()`/`.expect()` outside tests; use them only for documented internal invariants.
 - Keep module wiring small; route definitions live in `crates/strimzi-ui/src/routes/mod.rs`.
 - **Blocking vs async**: `ConnectClient` and rdkafka are synchronous. Only `strimzi-ui` is async (`#[tokio::main]`) and must wrap blocking calls in `with_connect_client`/`spawn_blocking`.
 - **DI & state**: constructor injection (`ConnectClient::new(url)`, `SnapshotTrigger::new(client, bootstrap)`); no global singletons; handlers take `State<AppState>`. Settings come from `load_settings` (secrets.toml) + `ConnectionSettings::merge_overrides` + `require_*()` accessors that fail with `MissingSetting`.

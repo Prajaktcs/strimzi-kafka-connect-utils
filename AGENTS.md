@@ -24,7 +24,7 @@ Cargo workspace (edition 2021, `rust-version = "1.75"`, resolver 2) with three c
 Key data flows:
 
 - **Lint**: file → `parse_config_text` (YAML→JSON normalization, unwraps `{name, config}` REST payloads) → `ConnectorLinter` (5 built-in rules + `.lintrc.toml` severities/exemptions + inline `# lint-disable:`) → `validate_schema` → `ValidationReport`. Errors fail; warnings fail only with `--strict`; `--json` emits the structured report (`validate.rs`, `linter/`).
-- **Connect REST**: `ConnectClient` (`connect/client.rs`) is a **synchronous** reqwest client against port 8083; non-2xx responses become `Error::ConnectHttp` with `HTTP <status>: <body>`, while connection and timeout failures include a port-forward hint.
+- **Connect REST**: `ConnectClient` (`connect/client.rs`) is a **synchronous** reqwest client parameterized by `connect_url` (local default often `http://127.0.0.1:8083` via port-forward); non-2xx responses become `Error::ConnectHttp` with `HTTP <status>: <body>`, while connection and timeout failures include a port-forward hint.
 - **Control snapshot**: `SnapshotTrigger` reads `signal.kafka.topic` from the connector config (default `debezium.signals`), produces an `execute-snapshot` signal via rdkafka, and falls back to restarting task 0 on failure (`control/snapshot.rs`).
 - **Monitor**: `NotificationMonitor` (rdkafka `BaseConsumer`) → JSON events → `SnapshotTracker` state machine: STARTED → IN_PROGRESS → COMPLETED/ABORTED (`monitor/`).
 - **UI**: `AppState` contains `ConnectionSettings`; each request builds a fresh `ConnectClient` inside `tokio::task::spawn_blocking` — never hold the blocking client across an await (`state.rs`, `blocking.rs`). Routes: `/dashboard`, `/monitor`, and `/control`; the logs page shells out to `kubectl`.

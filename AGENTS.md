@@ -59,7 +59,7 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `
 ## Code Conventions & Common Patterns
 
 - Follow Canonical Rust best practices (`docs/rust-best-practices.md`). Workspace lints forbid `unsafe` and enable clippy `pedantic` (allow-list fixed in root `Cargo.toml`). `just rust-check` + `just rust-test` are the pre-finish gate.
-- **Error handling**: concrete `thiserror` enums; no `anyhow`/`Box<dyn Error>` in `strimzi-ops-core`. Core defines `Error` + `Result<T>` in `lib.rs`; each binary crate has an `error.rs` + `result.rs` pair. The UI maps `Error` to HTTP statuses in `views.rs`. Error messages are shaped `cannot …` (lowercase).
+- **Error handling**: concrete `thiserror` enums; no `anyhow`/`Box<dyn Error>` in `strimzi-ops-core`. Core defines `Error` + `Result<T>` in `lib.rs`; each binary crate has an `error.rs` + `result.rs` pair. The UI maps `Error` to HTTP statuses in `views.rs`. Prefer lowercase `cannot …` for actionable failures; other variants may use different prefixes (`unknown …`, `missing …`, etc.).
 - Avoid `.unwrap()`/`.expect()` outside tests; use them only for documented internal invariants.
 - Keep module wiring small; route definitions live in `crates/strimzi-ui/src/routes/mod.rs`.
 - **Blocking vs async**: `ConnectClient` and rdkafka are synchronous. Only `strimzi-ui` is async (`#[tokio::main]`) and must wrap blocking calls in `with_connect_client`/`spawn_blocking`.

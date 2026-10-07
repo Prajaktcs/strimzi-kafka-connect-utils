@@ -171,12 +171,3 @@ pub struct EditPage {
     pub validation_error: Option<String>,
     pub flash: Option<String>,
 }
-
-#[derive(Template, WebTemplate)]
-#[template(path = "create.html")]
-pub struct CreatePage {
-    pub active: &'static str,
-    pub config_json: String,
-    pub flash: Option<String>,
-    pub error: Option<String>,
-}

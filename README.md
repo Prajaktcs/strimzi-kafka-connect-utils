@@ -8,7 +8,7 @@ Strimzi Ops is a comprehensive management platform for Kafka Connect, providing 
 
 - **Linter** (CLI): Flexible validation of connector configurations with configurable rules
 - **Monitor** (UI): Real-time snapshot tracking via Debezium Notifications
-- **Control** (UI): Manage connectors - restart/pause/resume and trigger snapshots
+- **Control** (UI): Manage existing connectors - restart/pause/resume and trigger snapshots. Connector creation is not available in the UI.
 
 This tool is designed to work with **existing Kafka Connect deployments** running on Kubernetes via Strimzi. It connects to your cluster remotely and provides a streamlined interface for managing connectors.
 

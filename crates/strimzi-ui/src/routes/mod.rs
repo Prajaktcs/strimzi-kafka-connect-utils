@@ -19,10 +19,6 @@ pub fn router(state: AppState) -> Router {
             get(monitor::monitor).post(monitor::monitor_submit),
         )
         .route("/control", get(control::control_list))
-        .route(
-            "/control/create",
-            get(control::create_form).post(control::create_submit),
-        )
         .route("/control/{name}/pause", post(control::pause_connector))
         .route("/control/{name}/resume", post(control::resume_connector))
         .route("/control/{name}/restart", post(control::restart_connector))

@@ -129,3 +129,22 @@ async fn control_logs_route_returns_page() {
     assert!(text.contains("demo-connector"));
     assert!(text.contains("Refresh Logs"));
 }
+
+#[tokio::test]
+async fn reject_connector_creation_for_get_and_post() {
+    let app = router(AppState::new(ConnectionSettings::default()));
+    for method in ["GET", "POST"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/control/create")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method}");
+    }
+}

@@ -168,8 +168,6 @@ pub enum ConnectorCommands {
     },
     ExportYaml {
         name: String,
-        #[arg(long = "cluster")]
-        cluster: Option<String>,
     },
 }
 
@@ -328,12 +326,12 @@ fn connectors_command(
             client.delete_connector(&name)?;
             println!("Deleted connector: {name}");
         }
-        ConnectorCommands::ExportYaml { name, cluster } => {
+        ConnectorCommands::ExportYaml { name } => {
             let config = client.get_connector_config(&name)?;
-            let cluster_name = cluster
-                .as_deref()
-                .unwrap_or_else(|| settings.cluster_name());
-            println!("{}", to_strimzi_yaml(&name, &config, cluster_name));
+            println!(
+                "{}",
+                to_strimzi_yaml(&name, &config, settings.cluster_name())
+            );
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -516,4 +514,56 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
     })?;
     println!("{text}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands, ConnectorCommands};
+    use clap::Parser;
+
+    #[test]
+    fn export_yaml_cluster_selector_and_resource_name_are_independent() {
+        for args in [
+            vec![
+                "strimzi-ops",
+                "--cluster",
+                "prod",
+                "--cluster-name",
+                "export-connect",
+                "connectors",
+                "export-yaml",
+                "orders",
+            ],
+            vec![
+                "strimzi-ops",
+                "connectors",
+                "--cluster",
+                "prod",
+                "--cluster-name",
+                "export-connect",
+                "export-yaml",
+                "orders",
+            ],
+            vec![
+                "strimzi-ops",
+                "connectors",
+                "export-yaml",
+                "orders",
+                "--cluster",
+                "prod",
+                "--cluster-name",
+                "export-connect",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).expect("global flags parse at every command level");
+            assert_eq!(cli.cluster.as_deref(), Some("prod"));
+            assert_eq!(cli.cluster_name.as_deref(), Some("export-connect"));
+            assert!(matches!(
+                cli.command,
+                Commands::Connectors {
+                    command: ConnectorCommands::ExportYaml { name }
+                } if name == "orders"
+            ));
+        }
+    }
 }

@@ -16,16 +16,28 @@ impl IntoResponse for Error {
             Self::Core(strimzi_ops_core::Error::ConnectHttp { .. }) => StatusCode::BAD_GATEWAY,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        let body = format!(
-            "<html><body style=\"font-family: sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem;\">\
-             <h1>Error</h1><pre style=\"white-space: pre-wrap;\">{self}</pre>\
-             <p><a href=\"/\">Back to Dashboard</a></p>\
-             <p>If Connect is down locally, start port-forwards with <code>just port-forward-all</code> \
-             (or <code>just setup</code> for a full local stack), then refresh.</p>\
-             </body></html>"
-        );
-        (status, Html(body)).into_response()
+        let page = ErrorPage {
+            error: self.to_string(),
+        };
+        match page.render() {
+            Ok(body) => (status, Html(body)).into_response(),
+            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        }
     }
+}
+
+#[derive(Template)]
+#[template(
+    source = "<html><body style=\"font-family: sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem;\">\
+              <h1>Error</h1><pre style=\"white-space: pre-wrap;\">{{ error }}</pre>\
+              <p><a href=\"/\">Back to Dashboard</a></p>\
+              <p>If Connect is down locally, start port-forwards with <code>just port-forward-all</code> \
+              (or <code>just setup</code> for a full local stack), then refresh.</p>\
+              </body></html>",
+    ext = "html"
+)]
+struct ErrorPage {
+    error: String,
 }
 
 pub fn redirect(path: &str) -> Response {
@@ -184,13 +196,4 @@ pub struct EditPage {
     pub config_json: String,
     pub validation_error: Option<String>,
     pub flash: Option<String>,
-}
-
-#[derive(Template, WebTemplate)]
-#[template(path = "create.html")]
-pub struct CreatePage {
-    pub nav: NavContext,
-    pub config_json: String,
-    pub flash: Option<String>,
-    pub error: Option<String>,
 }

@@ -172,3 +172,55 @@ async fn sidebar_lists_multiple_clusters() {
     assert!(text.contains("/c/local/dashboard"));
     assert!(text.contains("/c/prod/dashboard"));
 }
+
+#[tokio::test]
+async fn reject_connector_creation_for_get_and_post() {
+    let app = app(ConnectionSettings::default());
+    for method in ["GET", "POST"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/c/default/control/create")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method}");
+    }
+}
+
+#[tokio::test]
+async fn reject_unknown_cluster_snapshot_form() {
+    let response = app(ConnectionSettings::default())
+        .oneshot(
+            Request::builder()
+                .uri("/c/nope/control/demo/snapshot")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn escape_untrusted_cluster_in_error_page() {
+    let response = app(ConnectionSettings::default())
+        .oneshot(
+            Request::builder()
+                .uri("/c/%3Cscript%3Ealert%281%29%3C%2Fscript%3E/dashboard")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!text.contains("<script>"));
+}

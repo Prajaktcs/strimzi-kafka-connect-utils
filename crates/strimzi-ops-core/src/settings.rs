@@ -15,19 +15,21 @@ pub struct ConnectionSettings {
     pub namespace: Option<String>,
 }
 
-/// How to load Connect clusters: `secrets.toml` and/or `KafkaConnect` CRs.
+/// How to load Connect clusters: `secrets.toml` or `KafkaConnect` CRs.
 #[derive(Debug, Clone, Default)]
 pub struct LoadConfig {
     pub secrets: Option<PathBuf>,
     pub connect_url: Option<String>,
     pub bootstrap_servers: Option<String>,
     pub cluster_name: Option<String>,
+    /// Select an exact cluster ID. Discovered IDs are `namespace_name`, with dots
+    /// in the Kubernetes resource name retained verbatim.
     pub cluster_id: Option<String>,
     pub from_k8s: bool,
     pub k8s_namespace: Option<String>,
 }
 
-/// A named Kafka Connect cluster from `[[clusters]]` or legacy `[kafka]`.
+/// A Kafka Connect cluster from `[[clusters]]`, legacy `[kafka]`, or Kubernetes.
 #[derive(Debug, Clone)]
 pub struct ConnectCluster {
     pub id: String,
@@ -204,7 +206,10 @@ fn read_secrets(secrets: Option<&Path>) -> Result<Vec<ConnectCluster>> {
     Ok(Vec::new())
 }
 
-/// Load a single cluster (first in file, or empty defaults), then apply overrides.
+/// Load the only configured cluster (or empty defaults), then apply overrides.
+///
+/// Returns [`Error::MultipleClusters`] when more than one cluster is configured.
+/// Use [`LoadConfig::load_settings`] with `cluster_id` to select among them.
 pub fn load_settings(
     secrets: Option<&Path>,
     connect_url: Option<String>,
@@ -239,7 +244,10 @@ pub fn load_clusters(
 }
 
 impl LoadConfig {
-    /// Load every Connect cluster (file and/or `KafkaConnect` CRs).
+    /// Load every Connect cluster from Kubernetes when `from_k8s` is set,
+    /// otherwise from the secrets file. An empty inventory yields empty defaults.
+    ///
+    /// Overrides apply to `cluster_id` when found, otherwise to the first cluster.
     pub fn load_clusters(&self) -> Result<Vec<ConnectCluster>> {
         let mut clusters = if self.from_k8s {
             let list = crate::k8s::fetch_kafkaconnect_list(self.k8s_namespace.as_deref())?;
@@ -279,7 +287,10 @@ impl LoadConfig {
         Ok(clusters)
     }
 
-    /// Load one cluster for the CLI. Requires `--cluster` when more than one is found.
+    /// Load the selected cluster, or the only cluster when no ID is specified.
+    ///
+    /// Returns [`Error::UnknownCluster`] for an unknown `cluster_id` and
+    /// [`Error::MultipleClusters`] when multiple clusters exist without a selector.
     pub fn load_settings(&self) -> Result<ConnectionSettings> {
         let clusters = self.load_clusters()?;
         if let Some(id) = self.cluster_id.as_deref() {
@@ -302,31 +313,38 @@ impl LoadConfig {
     }
 }
 
+fn is_valid_dns_name(name: &str) -> bool {
+    name.split('.').all(|label| {
+        let is_alphanumeric = |ch: u8| ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        label
+            .as_bytes()
+            .first()
+            .copied()
+            .is_some_and(is_alphanumeric)
+            && label
+                .as_bytes()
+                .last()
+                .copied()
+                .is_some_and(is_alphanumeric)
+            && label.bytes().all(|ch| is_alphanumeric(ch) || ch == b'-')
+    })
+}
+
+/// Discovered selectors are always `namespace_name`, independent of inventory
+/// order or other resources. The underscore cannot occur in Kubernetes names;
+/// dots and hyphens remain verbatim and are URL-safe.
 pub(crate) fn clusters_from_kafkaconnect_list(
     list: &serde_json::Value,
 ) -> Result<Vec<ConnectCluster>> {
     let items = list
         .get("items")
         .and_then(serde_json::Value::as_array)
-        .cloned()
+        .map(Vec::as_slice)
         .unwrap_or_default();
 
-    let mut name_counts = HashSet::new();
-    let mut duplicates = HashSet::new();
-    for item in &items {
-        if let Some(name) = item
-            .pointer("/metadata/name")
-            .and_then(serde_json::Value::as_str)
-        {
-            if !name_counts.insert(name.to_owned()) {
-                duplicates.insert(name.to_owned());
-            }
-        }
-    }
-
-    let mut clusters = Vec::new();
-    let mut seen_ids = HashSet::new();
-    for item in &items {
+    let mut clusters = Vec::with_capacity(items.len());
+    let mut seen_resources = HashSet::with_capacity(items.len());
+    for item in items {
         let name = item
             .pointer("/metadata/name")
             .and_then(serde_json::Value::as_str)
@@ -337,6 +355,25 @@ pub(crate) fn clusters_from_kafkaconnect_list(
             .pointer("/metadata/namespace")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("default");
+        if name.len() > 253 || !is_valid_dns_name(name) {
+            return Err(Error::KubernetesDiscover {
+                reason: format!(
+                    "KafkaConnect metadata.name '{name}' must be a DNS subdomain of at most 253 characters"
+                ),
+            });
+        }
+        if namespace.len() > 63 || namespace.contains('.') || !is_valid_dns_name(namespace) {
+            return Err(Error::KubernetesDiscover {
+                reason: format!(
+                    "KafkaConnect {name} metadata.namespace '{namespace}' must be a DNS label of at most 63 characters"
+                ),
+            });
+        }
+        if !seen_resources.insert((namespace, name)) {
+            return Err(Error::KubernetesDiscover {
+                reason: format!("duplicate KafkaConnect resource {namespace}/{name}"),
+            });
+        }
         let bootstrap = item
             .pointer("/spec/bootstrapServers")
             .and_then(serde_json::Value::as_str)
@@ -348,23 +385,7 @@ pub(crate) fn clusters_from_kafkaconnect_list(
         let connect_url = annotated_url
             .or_else(|| Some(format!("http://{name}-connect-api.{namespace}.svc:8083")));
 
-        let id = if duplicates.contains(name) {
-            format!("{namespace}-{name}")
-        } else {
-            name.to_owned()
-        };
-        if !is_valid_cluster_id(&id) {
-            return Err(Error::KubernetesDiscover {
-                reason: format!(
-                    "KafkaConnect {namespace}/{name} maps to id '{id}' which must match [A-Za-z0-9][A-Za-z0-9_-]*"
-                ),
-            });
-        }
-        if !seen_ids.insert(id.clone()) {
-            return Err(Error::KubernetesDiscover {
-                reason: format!("duplicate Connect cluster id '{id}'"),
-            });
-        }
+        let id = format!("{namespace}_{name}");
         clusters.push(ConnectCluster {
             id,
             settings: ConnectionSettings {
@@ -487,12 +508,12 @@ connect_url = "http://b:8083"
         });
         let clusters = clusters_from_kafkaconnect_list(&list).unwrap();
         assert_eq!(clusters.len(), 2);
-        assert_eq!(clusters[0].id, "my-connect-cluster");
+        assert_eq!(clusters[0].id, "kafka_my-connect-cluster");
         assert_eq!(
             clusters[0].settings.connect_url.as_deref(),
             Some("http://my-connect-cluster-connect-api.kafka.svc:8083")
         );
-        assert_eq!(clusters[1].id, "payments-connect");
+        assert_eq!(clusters[1].id, "payments_payments-connect");
         assert_eq!(
             clusters[1].settings.connect_url.as_deref(),
             Some("https://connect.payments.example")
@@ -501,7 +522,7 @@ connect_url = "http://b:8083"
     }
 
     #[test]
-    fn disambiguates_kafkaconnect_names_across_namespaces() {
+    fn discovers_distinct_stable_ids_despite_colliding_name_prefixes() {
         let list = serde_json::json!({
             "items": [
                 {
@@ -511,12 +532,74 @@ connect_url = "http://b:8083"
                 {
                     "metadata": { "name": "connect", "namespace": "b" },
                     "spec": { "bootstrapServers": "kafka-b:9092" }
+                },
+                {
+                    "metadata": { "name": "a-connect", "namespace": "a" },
+                    "spec": { "bootstrapServers": "kafka-a:9092" }
                 }
             ]
         });
         let clusters = clusters_from_kafkaconnect_list(&list).unwrap();
-        let ids: Vec<_> = clusters.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, ["a-connect", "b-connect"]);
+        let ids: HashSet<_> = clusters.iter().map(|cluster| cluster.id.as_str()).collect();
+        assert_eq!(ids.len(), 3);
+
+        let mut reversed = list;
+        reversed["items"].as_array_mut().unwrap().reverse();
+        let reversed_clusters = clusters_from_kafkaconnect_list(&reversed).unwrap();
+        for (cluster, reversed_cluster) in clusters.iter().zip(&reversed_clusters) {
+            assert_eq!(cluster.id, reversed_cluster.id);
+            assert_eq!(
+                cluster.settings.connect_cluster_name,
+                reversed_cluster.settings.connect_cluster_name
+            );
+            assert_eq!(
+                cluster.settings.namespace,
+                reversed_cluster.settings.namespace
+            );
+        }
+    }
+
+    #[test]
+    fn discovers_dotted_names_without_losing_resource_identity() {
+        let list = serde_json::json!({
+            "items": [
+                { "metadata": { "name": "my.connect", "namespace": "kafka" } },
+                { "metadata": { "name": "my-connect", "namespace": "kafka" } }
+            ]
+        });
+        let clusters = clusters_from_kafkaconnect_list(&list).unwrap();
+        assert_eq!(clusters.len(), 2);
+        let dotted = clusters
+            .iter()
+            .find(|cluster| cluster.settings.cluster_name() == "my.connect")
+            .unwrap();
+        assert_eq!(dotted.id, "kafka_my.connect");
+        assert_eq!(dotted.settings.namespace.as_deref(), Some("kafka"));
+        assert_eq!(
+            dotted.settings.connect_url.as_deref(),
+            Some("http://my.connect-connect-api.kafka.svc:8083")
+        );
+        assert_ne!(clusters[0].id, clusters[1].id);
+    }
+
+    #[test]
+    fn malformed_discovery_resources_report_the_invalid_metadata() {
+        for (metadata, expected) in [
+            (serde_json::json!({ "namespace": "a" }), "metadata.name"),
+            (
+                serde_json::json!({ "name": "bad/name", "namespace": "a" }),
+                "metadata.name 'bad/name'",
+            ),
+            (
+                serde_json::json!({ "name": "connect", "namespace": "bad_namespace" }),
+                "metadata.namespace 'bad_namespace'",
+            ),
+        ] {
+            let list = serde_json::json!({ "items": [{ "metadata": metadata }] });
+            let err = clusters_from_kafkaconnect_list(&list).unwrap_err();
+            assert!(matches!(&err, Error::KubernetesDiscover { .. }));
+            assert!(err.to_string().contains(expected));
+        }
     }
 
     #[test]

@@ -6,8 +6,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use strimzi_ops_core::{
-    fetch_logs, to_strimzi_yaml, validate_config, ConnectClient, CreateConnectorRequest,
-    SnapshotTrigger,
+    fetch_logs, to_strimzi_yaml, validate_config, ConnectClient, SnapshotTrigger,
 };
 
 use crate::blocking::{spawn_blocking, with_connect_client};
@@ -16,8 +15,8 @@ use crate::paths;
 use crate::routes::{ClusterPath, ConnectorPath};
 use crate::state::AppState;
 use crate::views::{
-    redirect, render, ControlPage, ControlRow, CreatePage, EditPage, HtmlResult, LogsPage,
-    MissingConfigPage, NavContext, SnapshotPage, YamlPage,
+    redirect, render, ControlPage, ControlRow, EditPage, HtmlResult, LogsPage, MissingConfigPage,
+    NavContext, SnapshotPage, YamlPage,
 };
 
 pub async fn control_list(
@@ -143,6 +142,7 @@ pub async fn snapshot_form(
     State(state): State<AppState>,
     Path(path): Path<ConnectorPath>,
 ) -> HtmlResult {
+    state.cluster(&path.cluster)?;
     let nav = state.nav("control", &path.cluster);
     render(SnapshotPage {
         nav,
@@ -372,79 +372,6 @@ enum EditOutcome {
         formatted: String,
         config_json: String,
     },
-}
-
-pub async fn create_form(
-    State(state): State<AppState>,
-    Path(path): Path<ClusterPath>,
-) -> HtmlResult {
-    let nav = state.nav("control", &path.cluster);
-    render(CreatePage {
-        nav,
-        config_json: "{\n  \"name\": \"my-connector\",\n  \"config\": {\n  }\n}".to_owned(),
-        flash: None,
-        error: None,
-    })
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateForm {
-    pub config_json: String,
-}
-
-pub async fn create_submit(
-    State(state): State<AppState>,
-    Path(path): Path<ClusterPath>,
-    Form(form): Form<CreateForm>,
-) -> HtmlResult {
-    let cluster = state.cluster(&path.cluster)?;
-    let url = cluster
-        .settings
-        .require_connect_url()
-        .map(str::to_owned)
-        .map_err(Error::from)?;
-    let value: Value = serde_json::from_str(&form.config_json).map_err(|err| Error::Json {
-        reason: err.to_string(),
-    })?;
-
-    let request = create_request_from_value(value).map_err(|reason| Error::Json { reason })?;
-    let name = request.name.clone();
-    let cluster_id = path.cluster.clone();
-
-    with_connect_client(url, move |client| {
-        client.create_connector(&request)?;
-        Ok(())
-    })
-    .await?;
-
-    Ok(redirect(&paths::control_focus(
-        &cluster_id,
-        &name,
-        Some(&format!("Created%20{name}")),
-    )))
-}
-
-fn create_request_from_value(value: Value) -> std::result::Result<CreateConnectorRequest, String> {
-    let obj = value
-        .as_object()
-        .ok_or_else(|| "create payload must be a JSON object".to_owned())?;
-    if let (Some(Value::String(name)), Some(Value::Object(config))) =
-        (obj.get("name"), obj.get("config"))
-    {
-        return Ok(CreateConnectorRequest {
-            name: name.clone(),
-            config: config.clone(),
-        });
-    }
-    if let Some(Value::String(name)) = obj.get("name") {
-        let mut config = obj.clone();
-        config.remove("name");
-        return Ok(CreateConnectorRequest {
-            name: name.clone(),
-            config,
-        });
-    }
-    Err("create payload must include name and config".to_owned())
 }
 
 fn urlencoding_encode(input: &str) -> String {

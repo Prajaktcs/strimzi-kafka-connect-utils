@@ -6,15 +6,10 @@ use crate::{Error, Result};
 
 /// Build the Strimzi label selector for Kafka Connect pods.
 ///
-/// Strimzi labels Connect pods as `{cluster_name}-connect`.
+/// `cluster_name` is the `KafkaConnect` resource name, not a pod-label name.
 #[must_use]
 pub fn connect_label_selector(cluster_name: &str) -> String {
-    let name = if cluster_name.ends_with("-connect") {
-        cluster_name.to_owned()
-    } else {
-        format!("{cluster_name}-connect")
-    };
-    format!("strimzi.io/name={name}")
+    format!("strimzi.io/name={cluster_name}-connect")
 }
 
 /// Filter log lines that contain `filter_text`.
@@ -133,10 +128,10 @@ mod tests {
     }
 
     #[test]
-    fn label_selector_keeps_existing_connect_suffix() {
+    fn label_selector_appends_suffix_to_resource_ending_in_connect() {
         assert_eq!(
             connect_label_selector("my-cluster-connect"),
-            "strimzi.io/name=my-cluster-connect"
+            "strimzi.io/name=my-cluster-connect-connect"
         );
     }
 

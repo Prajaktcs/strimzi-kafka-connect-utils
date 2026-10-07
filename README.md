@@ -8,7 +8,7 @@ Strimzi Ops is a comprehensive management platform for Kafka Connect, providing 
 
 - **Linter** (CLI): Flexible validation of connector configurations with configurable rules
 - **Monitor** (UI): Real-time snapshot tracking via Debezium Notifications
-- **Control** (UI): Manage connectors - restart/pause/resume and trigger snapshots
+- **Control** (UI): Manage existing connectors - restart/pause/resume and trigger snapshots. Connector creation is not available in the UI.
 
 This tool is designed to work with **existing Kafka Connect deployments** running on Kubernetes via Strimzi. It connects to your cluster remotely and provides a streamlined interface for managing connectors.
 
@@ -127,6 +127,43 @@ just lint-config examples/debezium-postgres-connector.yaml
 ```
 
 (`just ui` also starts local-stack port-forwards; use `cargo run -p strimzi-ui` when pointing at an existing remote Connect.)
+
+### Multiple Connect clusters
+
+Discover Strimzi `KafkaConnect` resources instead of maintaining a local registry:
+
+```bash
+cargo run -p strimzi-ui -- --from-k8s
+cargo run -p strimzi-ops -- --from-k8s --cluster kafka_my-connect-cluster connectors list
+```
+
+Discovery lists all namespaces by default; add `--k8s-namespace kafka` to restrict it.
+Each discovered ID is `<namespace>_<resource-name>`, even when the resource name is
+unique. This prevents collisions across namespaces and keeps IDs stable as inventory
+changes. Dots in valid resource names are retained, for example `kafka_my.connect`.
+The sidebar displays namespace/resource names; Dashboard, Control, and Monitor stay
+under `/c/<id>/…` for the selected cluster. Connector creation remains CLI-only.
+
+The default REST URL is `http://<name>-connect-api.<namespace>.svc:8083`.
+For a laptop or another out-of-cluster client, annotate each resource with a reachable
+REST endpoint (and keep its port-forward running when applicable):
+
+```bash
+kubectl -n kafka annotate kafkaconnect my-connect-cluster \
+  strimzi-ops.io/connect-url=http://127.0.0.1:8083 --overwrite
+```
+
+Without `--from-k8s`, the existing `[kafka]` configuration still loads one cluster.
+Alternatively, configure `[[clusters]]` entries with explicit IDs in `secrets.toml`;
+see `secrets.toml.example`. The CLI requires `--cluster <id>` when several clusters
+are loaded and rejects unknown IDs. `--cluster-name` independently overrides the
+Strimzi resource name used in exported YAML:
+
+```bash
+cargo run -p strimzi-ops -- --from-k8s connectors export-yaml orders \
+  --cluster kafka_my-connect-cluster --cluster-name target-connect
+```
+
 
 ### Available Just Recipes
 

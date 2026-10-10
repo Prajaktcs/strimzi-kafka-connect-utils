@@ -7,6 +7,8 @@ metadata:
     app: nessie
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: nessie
@@ -26,8 +28,22 @@ spec:
               value: "19120"
             - name: NESSIE_VERSION_STORE_TYPE
               value: "ROCKSDB"
-            - name: NESSIE_VERSION_STORE_ROCKSDB_DB_PATH
+            - name: NESSIE_VERSION_STORE_PERSIST_ROCKS_DATABASE_PATH
               value: "/var/lib/nessie/data"
+            - name: JAVA_OPTS_APPEND
+              value: >-
+                -Dnessie.catalog.default-warehouse=warehouse
+                -Dnessie.catalog.warehouses.warehouse.location=s3://warehouse/iceberg
+                -Dnessie.catalog.service.s3.default-options.endpoint=http://garage:3900
+                -Dnessie.catalog.service.s3.default-options.path-style-access=true
+                -Dnessie.catalog.service.s3.default-options.region=garage
+                -Dnessie.catalog.service.s3.default-options.auth-type=APPLICATION_GLOBAL
+                -Dnessie.catalog.service.s3.default-options.chunked-encoding-enabled=false
+            # Fixed local-dev credentials, matching Garage (not for production).
+            - name: AWS_ACCESS_KEY_ID
+              value: "GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
           volumeMounts:
             - name: nessie-data
               mountPath: /var/lib/nessie/data

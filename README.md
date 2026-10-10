@@ -253,13 +253,22 @@ Manage your connectors:
   "name": "iceberg-sink-connector",
   "connector.class": "org.apache.iceberg.connect.IcebergSinkConnector",
   "tasks.max": 1,
-  "topics": "lakehouse.public.users,lakehouse.public.orders",
-  "iceberg.catalog.type": "hadoop",
-  "iceberg.catalog.warehouse": "s3a://warehouse/iceberg",
+  "topics": "lakehouse.public.users",
+  "iceberg.tables": "public.users",
+  "iceberg.tables.auto-create-enabled": true,
+  "iceberg.catalog.type": "rest",
+  "iceberg.catalog.uri": "http://nessie:19120/iceberg",
+  "iceberg.catalog.warehouse": "warehouse",
+  "iceberg.catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+  "iceberg.catalog.client.region": "garage",
   "iceberg.catalog.s3.endpoint": "http://garage:3900",
   "iceberg.catalog.s3.access-key-id": "YOUR_ACCESS_KEY",
   "iceberg.catalog.s3.secret-access-key": "YOUR_SECRET_KEY",
-  "iceberg.catalog.s3.path-style-access": true
+  "iceberg.catalog.s3.path-style-access": true,
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": false,
+  "value.converter.schemas.enable": false
 }
 ```
 
@@ -403,6 +412,25 @@ just deploy
 7. Launch the Rust web UI (`strimzi-ui`)
 
 The first run takes 5–10 minutes.
+
+The local Iceberg sink sends `lakehouse.public.users` to `public.users` using
+Nessie's Iceberg REST endpoint and Garage-backed `S3FileIO`. With auto-creation
+enabled, the connector creates the namespace and table on the first record.
+Auto-creation does not select table names; `iceberg.tables` supplies them. The
+multi-topic examples use a topic field and per-table routing regexes instead
+of `topic=table` entries.
+
+Nessie stores catalog metadata on its PVC and disables chunked S3 uploads for
+Garage compatibility. Connect's `offset.flush.interval.ms=10000` keeps idle
+Iceberg control consumers polling below their session timeout.
+
+The local worker serializes JSON keys and values with schemas disabled, matching
+the sink's explicit converter settings. Debezium CDC fields such as `after` and
+`op` remain intact; the converter does not add a `{schema,payload}` wrapper.
+Changing these defaults does not rewrite existing Kafka messages.
+
+The sample source expects `source_db.public.users`; deploying the connectors
+does not create that PostgreSQL table or seed records.
 
 ### Check Status
 

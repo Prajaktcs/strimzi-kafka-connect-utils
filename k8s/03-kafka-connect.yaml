@@ -19,6 +19,9 @@ spec:
     config.storage.replication.factor: 1
     offset.storage.replication.factor: 1
     status.storage.replication.factor: 1
+    # Match source serialization to the schemaless JSON expected by the sinks.
+    key.converter.schemas.enable: false
+    value.converter.schemas.enable: false
     # Keep idle Iceberg control polling below the Kafka consumer session timeout.
     offset.flush.interval.ms: 10000
   image: my-connect-cluster:0.0.3

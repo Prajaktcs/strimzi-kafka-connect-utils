@@ -424,6 +424,11 @@ Nessie stores catalog metadata on its PVC and disables chunked S3 uploads for
 Garage compatibility. Connect's `offset.flush.interval.ms=10000` keeps idle
 Iceberg control consumers polling below their session timeout.
 
+The local worker serializes JSON keys and values with schemas disabled, matching
+the sink's explicit converter settings. Debezium CDC fields such as `after` and
+`op` remain intact; the converter does not add a `{schema,payload}` wrapper.
+Changing these defaults does not rewrite existing Kafka messages.
+
 The sample source expects `source_db.public.users`; deploying the connectors
 does not create that PostgreSQL table or seed records.
 

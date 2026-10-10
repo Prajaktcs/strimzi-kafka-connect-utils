@@ -7,9 +7,9 @@
 #   1. start Colima+k8s if needed
 #   2. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
 #   3. build Connect image with Debezium + Iceberg sink
-#   4. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + Garage 2.3 + Nessie
+#   4. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + RustFS 1.0.1
 #      (wipes legacy v1beta2 Strimzi CRDs if present; installs operator into kafka ns)
-#   5. write secrets.toml with local-dev Garage keys
+#   5. write secrets.toml with local-dev RustFS keys
 #   6. apply sample Postgres source + Iceberg sink connectors
 #   7. start background port-forwards (nohup under .local/port-forwards/; IPv4)
 #   8. launch Rust web UI (strimzi-ui)
@@ -37,12 +37,12 @@ iceberg_connect_version := "1.9.2"
 connect_image := "my-connect-cluster:0.0.3"
 helper := "scripts/local-dev.sh"
 
-# Garage 2.3 --single-node --default-bucket credentials (local-dev only).
-# Must match env in k8s/04-garage.yaml.
-garage_access_key := "GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-garage_secret_key := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-garage_bucket := "warehouse"
-garage_endpoint := "http://127.0.0.1:3900"
+# RustFS credentials (LOCAL DEV ONLY).
+# Must match env in k8s/04-rustfs.yaml.
+rustfs_access_key := "rustfsadmin"
+rustfs_secret_key := "rustfsadmin"
+rustfs_bucket := "warehouse"
+rustfs_endpoint := "http://127.0.0.1:9000"
 
 default:
     @just --list
@@ -54,8 +54,9 @@ setup: ensure-cluster build-connect deploy sync-secrets apply-connector port-for
     @echo "  Connect API : http://127.0.0.1:8083"
     @echo "  Kafka       : 127.0.0.1:9092"
     @echo "  Postgres    : 127.0.0.1:5432  (postgres / password / source_db)"
-    @echo "  Garage S3   : {{ garage_endpoint }}"
-    @echo "  Nessie      : http://127.0.0.1:19120"
+    @echo "  RustFS S3   : {{ rustfs_endpoint }}"
+    @echo "  Catalog     : {{ rustfs_endpoint }}/iceberg"
+    @echo "  Console     : http://127.0.0.1:9001 (LOCAL DEV ONLY: rustfsadmin / rustfsadmin)"
     @echo "  UI          : http://127.0.0.1:8501"
     @echo ""
     @echo "Stack: Strimzi {{ strimzi_version }} / Kafka {{ kafka_version }} / Debezium {{ debezium_version }}"
@@ -79,7 +80,7 @@ build-connect: ensure-buildx
     docker buildx build --load -t {{ connect_image }} -f k8s/Dockerfile.connect k8s/
     @echo "Image {{ connect_image }} ready."
 
-# Deploy local Kubernetes environment (Strimzi/Kafka/Postgres/Garage/Nessie/Connect)
+# Deploy local Kubernetes environment (Strimzi/Kafka/Postgres/RustFS/Connect)
 deploy:
     cd k8s && ./deploy.sh
 
@@ -98,8 +99,8 @@ doctor:
     echo ""
     echo -n "Connect :8083 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8083/ || echo "down"
     echo -n "UI      :8501 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501/ || echo "down"
-    echo -n "Garage  :3900 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3900/ || echo "down"
-    echo -n "Nessie  :19120 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:19120/ || echo "down"
+    echo -n "RustFS  :9000 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9000/health || echo "down"
+    echo -n "Console :9001 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9001/rustfs/console/health || echo "down"
     echo ""
     echo "If Connect is down: just port-forward-all"
 
@@ -114,9 +115,9 @@ down: destroy
 destroy-hard: stop-forwards
     cd k8s && DESTROY_CRDS=1 ./destroy.sh
 
-# Write secrets.toml with local-dev Garage credentials from this justfile
+# Write secrets.toml with LOCAL DEV ONLY RustFS credentials from this justfile
 sync-secrets:
-    bash {{ helper }} sync-secrets "{{ garage_access_key }}" "{{ garage_secret_key }}" "{{ garage_bucket }}" "{{ garage_endpoint }}"
+    bash {{ helper }} sync-secrets "{{ rustfs_access_key }}" "{{ rustfs_secret_key }}" "{{ rustfs_bucket }}" "{{ rustfs_endpoint }}"
 
 # Deploy the sample Debezium Postgres source + Iceberg sink connectors
 apply-connector:
@@ -149,15 +150,15 @@ port-forward-postgres:
     @echo "PostgreSQL → 127.0.0.1:5432 (user: postgres / password / db: source_db)"
     kubectl port-forward --address 127.0.0.1 svc/postgres 5432:5432 -n {{ namespace }}
 
-# Forward Garage S3 API (3900) — foreground
-port-forward-garage:
-    @echo "Garage S3 → {{ garage_endpoint }} (Ctrl+C to stop)"
-    kubectl port-forward --address 127.0.0.1 svc/garage 3900:3900 -n {{ namespace }}
+# Forward RustFS S3 and built-in Iceberg REST catalog (9000) — foreground
+port-forward-rustfs:
+    @echo "RustFS S3 → {{ rustfs_endpoint }}, catalog → {{ rustfs_endpoint }}/iceberg (Ctrl+C to stop)"
+    kubectl port-forward --address 127.0.0.1 svc/rustfs 9000:9000 -n {{ namespace }}
 
-# Forward Nessie catalog API (19120) — foreground
-port-forward-nessie:
-    @echo "Nessie → http://127.0.0.1:19120 (Ctrl+C to stop)"
-    kubectl port-forward --address 127.0.0.1 svc/nessie 19120:19120 -n {{ namespace }}
+# Forward RustFS console (9001) — foreground
+port-forward-rustfs-console:
+    @echo "RustFS console → http://127.0.0.1:9001 (LOCAL DEV ONLY: rustfsadmin / rustfsadmin)"
+    kubectl port-forward --address 127.0.0.1 svc/rustfs 9001:9001 -n {{ namespace }}
 
 # Start Rust web UI (ensures port-forwards first)
 run: ui

@@ -76,12 +76,12 @@ ensure_cluster() {
 
 sync_secrets() {
   # Args from justfile pins (access secret bucket endpoint); fall back to local defaults.
-  local access_key="${1:-GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
-  local secret_key="${2:-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb}"
+  local access_key="${1:-rustfsadmin}"
+  local secret_key="${2:-rustfsadmin}"
   local bucket="${3:-warehouse}"
-  local endpoint="${4:-http://localhost:3900}"
+  local endpoint="${4:-http://127.0.0.1:9000}"
   write_secrets "${access_key}" "${secret_key}" "${bucket}" "${endpoint}"
-  echo "Wrote local-dev Garage credentials to secrets.toml"
+  echo "Wrote LOCAL DEV ONLY RustFS credentials to secrets.toml"
   echo "  access_key=${access_key}"
   echo "  endpoint=${endpoint}"
   echo "  bucket=${bucket}"
@@ -91,7 +91,7 @@ write_secrets() {
   local access_key="$1"
   local secret_key="$2"
   local bucket="${3:-warehouse}"
-  local endpoint="${4:-http://127.0.0.1:3900}"
+  local endpoint="${4:-http://127.0.0.1:9000}"
   # Prefer 127.0.0.1 over localhost so clients (reqwest, curl) do not hit ::1 first.
   cat >"${ROOT}/secrets.toml" <<EOF
 [kafka]
@@ -199,8 +199,8 @@ port_forward_all() {
   start_port_forward connect svc/my-connect-cluster-connect-api 8083 8083
   start_port_forward kafka svc/my-cluster-kafka-bootstrap 9092 9092
   start_port_forward postgres svc/postgres 5432 5432
-  start_port_forward garage svc/garage 3900 3900
-  start_port_forward nessie svc/nessie 19120 19120
+  start_port_forward rustfs svc/rustfs 9000 9000
+  start_port_forward rustfs-console svc/rustfs 9001 9001
 
   if curl -sf --connect-timeout 3 "http://127.0.0.1:8083/" >/dev/null; then
     echo "Connect API healthy at http://127.0.0.1:8083/"
@@ -219,8 +219,8 @@ status_port_forwards() {
     "connect:8083"
     "kafka:9092"
     "postgres:5432"
-    "garage:3900"
-    "nessie:19120"
+    "rustfs:9000"
+    "rustfs-console:9001"
   )
   echo "Background port-forwards (.local/port-forwards):"
   for entry in "${pairs[@]}"; do
@@ -249,8 +249,8 @@ stop_port_forwards() {
     kill_port_listeners 8083
     kill_port_listeners 9092
     kill_port_listeners 5432
-    kill_port_listeners 3900
-    kill_port_listeners 19120
+    kill_port_listeners 9000
+    kill_port_listeners 9001
     return 0
   fi
   local pid_file pid
@@ -266,8 +266,8 @@ stop_port_forwards() {
   kill_port_listeners 8083
   kill_port_listeners 9092
   kill_port_listeners 5432
-  kill_port_listeners 3900
-  kill_port_listeners 19120
+  kill_port_listeners 9000
+  kill_port_listeners 9001
   echo "Port-forwards stopped."
 }
 

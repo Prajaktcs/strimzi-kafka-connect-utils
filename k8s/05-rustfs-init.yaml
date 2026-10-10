@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: rustfs-init
+  namespace: kafka
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: init
+          image: curlimages/curl:8.17.0
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: rustfs-s3-credentials
+                  key: accessKeyId
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rustfs-s3-credentials
+                  key: secretKey
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              signed_request() {
+                curl --silent --show-error --connect-timeout 5 --max-time 30 \
+                  --aws-sigv4 'aws:amz:us-east-1:s3' \
+                  --user "${AWS_ACCESS_KEY_ID}:${AWS_SECRET_ACCESS_KEY}" \
+                  --header 'x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+                  "$@"
+              }
+              status="$(signed_request --head --output /dev/null --write-out '%{http_code}' http://rustfs:9000/warehouse)"
+              case "$status" in
+                200) echo 'Warehouse bucket already exists' ;;
+                404) signed_request --fail-with-body --request PUT http://rustfs:9000/warehouse ;;
+                *) echo "Cannot inspect warehouse bucket: HTTP $status" >&2; exit 1 ;;
+              esac
+              signed_request --fail-with-body --request PUT http://rustfs:9000/iceberg/v1/buckets/warehouse
+              signed_request --fail-with-body http://rustfs:9000/iceberg/v1/config?warehouse=warehouse

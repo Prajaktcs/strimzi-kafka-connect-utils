@@ -35,7 +35,7 @@ Key data flows:
 - `crates/strimzi-ops/src/` — CLI: `lib.rs` (clap `Cli` + subcommands), `main.rs`, `bin/strimzi_lint.rs`
 - `crates/strimzi-ui/src/` — `main.rs`, `state.rs`, `blocking.rs`, `routes/` (dashboard/control/monitor), `views.rs` (Askama + Error→HTTP mapping)
 - `crates/strimzi-ui/tests/http_routes.rs` — sole integration test dir
-- `k8s/` — local-dev stack (namespace `kafka`: Strimzi 1.1.0, Kafka 4.3.0, Connect 4.3.0 with Debezium 3.6.0 + Iceberg sink, Postgres 18.4, Garage S3, Nessie catalog) + `deploy.sh`/`destroy.sh`/`Dockerfile.connect`
+- `k8s/` — local-dev stack (namespace `kafka`: Strimzi 1.1.0, Kafka 4.3.0, Connect 4.3.0 with Debezium 3.6.0 + Iceberg sink, Postgres 18.4, RustFS 1.0.1 S3 + built-in Iceberg REST catalog) + `deploy.sh`/`destroy.sh`/`Dockerfile.connect`
 - `scripts/local-dev.sh` — helpers behind the port-forward/secrets/cluster just recipes
 - `examples/` — sample connectors (Debezium Postgres, Iceberg sink, lint-exemption demo); linted by CI
 - `docs/rust-best-practices.md`, `.cursor/rules/` — style standard (must follow)
@@ -54,7 +54,7 @@ just doctor              # pods + forward status + HTTP health checks
 just destroy             # tear down the k8s stack
 ```
 
-Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, Garage S3 `3900`, Nessie `19120`, UI `8501`.
+Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, RustFS S3/catalog `9000` (REST `/iceberg`), RustFS console `9001`, UI `8501`.
 
 ## Code Conventions & Common Patterns
 

@@ -1,178 +1,90 @@
-### Updated Technical Specification: Strimzi Ops Platform (v3)
+# Technical Specification: Strimzi Ops Platform
 
 ## 1. Project Overview
 
 **Name:** `Strimzi-ops`
-**Goal:** A unified platform to validate, monitor, and control a Debezium-based Data Strimzi.
-**Core Features:**
+**Goal:** Validate, monitor, and control Debezium-based Kafka Connect pipelines.
 
-- **Validator:** Static analysis of connector configs (`strimzi-ops-core` / `strimzi-lint`).
-- **Monitor:** Snapshot tracking via Debezium Notifications.
-- **Control:** Restart/Pause/Resume connectors and trigger Snapshots.
+- **Validator:** Static connector configuration analysis (`strimzi-ops-core` / `strimzi-lint`).
+- **Monitor:** Snapshot tracking via Debezium notifications.
+- **Control:** Restart, pause, resume, and trigger connector snapshots.
+- **Interfaces:** Rust CLI and Axum/Askama/HTMX UI (`strimzi-ops` / `strimzi-ui`).
 
-## 2. Infrastructure Stack (Updated)
+## 2. Current Local Kubernetes Architecture
 
-- **Broker:** **Redpanda** (Kafka API compatible, C++).
-- **Object Storage:** **Garage** (S3 compatible, Rust).
-- **Database:** Postgres 15 (Source & Sink).
-- **Processing:** Kafka Connect (Debezium + Iceberg + JDBC).
-- **App Logic:** Rust (`strimzi-ops` / `strimzi-ui`).
+The supported local deployment uses the manifests and scripts under `k8s/`, not Docker Compose. All runtime services live in namespace `kafka`.
 
-## 3. Local Development Setup (Docker)
+| Component | Version / role |
+| --- | --- |
+| Strimzi | 1.1.0 operator |
+| Kafka | 4.3.0, single-node KRaft |
+| Kafka Connect | 4.3.0, custom local image with Debezium 3.6.0 and Iceberg sink |
+| PostgreSQL | 18.4 Alpine, CDC source |
+| RustFS | **1.0.1**, S3 storage and built-in Iceberg REST catalog |
+| Application | Rust core library, CLI, and web UI |
 
-Here is your updated `docker-compose.yaml`.
+Data flows from PostgreSQL through Debezium into Kafka, then through the Iceberg sink into RustFS. RustFS owns both object storage and the Iceberg REST catalog; there is no separate catalog service.
 
-- **Change 1:** Replaced `minio` with `garage`.
-- **Change 4:** Added a `configuration` step for Garage (buckets/keys) because it doesn't default to `admin/password` like MinIO.
+`k8s/04-rustfs.yaml` supplies the RustFS workload, persistent storage, and service. `k8s/05-rustfs-init.yaml` supplies the `rustfs-init` Job that initializes the `warehouse` bucket. The REST warehouse/prefix is also `warehouse`.
 
-```yaml
-version: "3.8"
+## 3. Endpoints and Authentication
 
-services:
-  # --- 1. Infrastructure: Redpanda (Kafka Broker) ---
-  redpanda:
-    image: docker.redpanda.com/redpanda/redpanda:v23.2.14
-    container_name: redpanda
-    ports:
-      - "9092:9092"
-      - "9644:9644"
-    command:
-      - redpanda start
-      - --smp 1
-      - --memory 1G
-      - --mode dev-container
-      - --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
-      - --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
-    healthcheck:
-      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy: true'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+| Interface | In-cluster endpoint | Port-forward endpoint |
+| --- | --- | --- |
+| Connect REST | `http://my-connect-cluster-connect-api:8083` | `http://localhost:8083` |
+| RustFS S3 | `http://rustfs:9000` | `http://localhost:9000` |
+| Iceberg REST | `http://rustfs:9000/iceberg` | `http://localhost:9000/iceberg` |
+| RustFS console | `http://rustfs:9001` | `http://localhost:9001` |
 
-  # --- 2. Storage: Garage (Rust S3) ---
-  garage:
-    image: dxflrs/garage:v0.9.1
-    container_name: garage
-    ports:
-      - "3900:3900" # S3 API
-      - "3902:3902" # Web Admin
-    environment:
-      # Garage requires a config file or env vars. We use a simple env setup for dev.
-      RUST_LOG: info
-    volumes:
-      - ./config/garage.toml:/etc/garage.toml
-      - garage_data:/var/lib/garage
-    command: ["/garage", "server"]
+Kafka and PostgreSQL use local forwarded ports `9092` and `5432`; the UI uses `8501`.
 
-  # --- 3. Setup Helper (Create Bucket/Keys in Garage) ---
-  # Garage requires CLI interaction to create keys/buckets.
-  # We run this one-off container to provision the dev environment.
-  setup-garage:
-    image: dxflrs/garage:v0.9.1
-    depends_on:
-      - garage
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5;
-      # 1. Initialize layout (single node)
-      /garage layout assign -z dc1 -c 1g localhost || true;
-      /garage layout apply --version 1 || true;
-      # 2. Create Key (Access/Secret) - We grep specifically for the key output
-      # Note: In a real script, parsing is cleaner. Here we hardcode for simplicity or print to logs.
-      /garage key create Strimzi-key || true;
-      /garage bucket create warehouse || true;
-      /garage bucket allow warehouse --read --write --key Strimzi-key;
-      echo 'Garage Setup Complete. Check logs for Keys if dynamic.';
-      "
-    environment:
-      RPC_HOST: garage:3901
+Fixed credentials `rustfsadmin` / `rustfsadmin` are **LOCAL DEV ONLY**. Both the REST catalog and S3FileIO require credentials. Connector catalog settings are:
 
-  # --- 4. Database: Source (CDC Enabled) ---
-  postgres-source:
-    image: debezium/postgres:15
-    container_name: postgres-source
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: source_db
-
-  # --- 5. Processing: Kafka Connect ---
-  connect:
-    build: ./connect-image
-    container_name: connect
-    depends_on:
-      redpanda:
-        condition: service_healthy
-    ports:
-      - "8083:8083"
-    environment:
-      CONNECT_BOOTSTRAP_SERVERS: "redpanda:29092"
-      CONNECT_REST_PORT: 8083
-      CONNECT_GROUP_ID: "connect-cluster"
-      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
-      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
-      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
-      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONNECT_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
-      CONNECT_REST_ADVERTISED_HOST_NAME: "connect"
-      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-      # S3/Garage Configs (Passed to Connectors)
-      AWS_ACCESS_KEY_ID: "REPLACE_WITH_GENERATED_KEY_FROM_SETUP"
-      AWS_SECRET_ACCESS_KEY: "REPLACE_WITH_GENERATED_SECRET_FROM_SETUP"
-
-volumes:
-  garage_data:
+```json
+{
+  "iceberg.catalog.type": "rest",
+  "iceberg.catalog.uri": "http://rustfs:9000/iceberg",
+  "iceberg.catalog.warehouse": "warehouse",
+  "iceberg.catalog.prefix": "warehouse",
+  "iceberg.catalog.rest.sigv4-enabled": true,
+  "iceberg.catalog.rest.signing-name": "s3",
+  "iceberg.catalog.rest.signing-region": "us-east-1",
+  "iceberg.catalog.rest.access-key-id": "rustfsadmin",
+  "iceberg.catalog.rest.secret-access-key": "rustfsadmin",
+  "iceberg.catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
+  "iceberg.catalog.client.region": "us-east-1",
+  "iceberg.catalog.s3.endpoint": "http://rustfs:9000",
+  "iceberg.catalog.s3.access-key-id": "rustfsadmin",
+  "iceberg.catalog.s3.secret-access-key": "rustfsadmin",
+  "iceberg.catalog.s3.path-style-access": true
+}
 ```
 
-### 4. Configuration for Garage (`config/garage.toml`)
-
-You need to mount this file to configure Garage to open the S3 port. Create `config/garage.toml`:
+The Ops tool's host-side storage configuration is separate from the connector's REST authentication:
 
 ```toml
-metadata_dir = "/var/lib/garage/meta"
-data_dir = "/var/lib/garage/data"
-
-[replication_mode]
-mode = "none" # Single node for local dev
-
-[s3_api]
-s3_region = "us-east-1"
-api_bind_addr = "[::]:3900" # Bind S3 to port 3900
-root_domain = ".s3.local"
-
-[s3_web]
-bind_addr = "[::]:3902"
-root_domain = ".web.local"
-enabled = true
-
-[rpc]
-bind_addr = "[::]:3901"
-
-```
-
-### 5. Updated `secrets.toml` for the Ops Tool
-
-Since Garage runs on port `3900` (not `9000`), update your secrets:
-
-```toml
-[kafka]
-bootstrap_servers = "localhost:9092"
-connect_url = "http://localhost:8083"
-
 [storage]
 type = "s3"
-endpoint_url = "http://localhost:3900" # Pointing to Garage
-access_key = "YOUR_GARAGE_KEY"
-secret_key = "YOUR_GARAGE_SECRET"
+endpoint_url = "http://localhost:9000"
+access_key = "rustfsadmin"
+secret_key = "rustfsadmin"
 bucket = "warehouse"
-
 ```
 
-This setup gives you a purely **Rust + C++** infrastructure layer (Redpanda + Garage), which is incredibly efficient and modern compared to the old Java/Go stack (Kafka/MinIO).
+## 4. Local Setup and Limits
 
-For a quick demonstration of setting up a local development environment with Docker and Kafka (Redpanda), check out this video: [Kafka & Docker for Local Development](https://www.google.com/search?q=https://www.youtube.com/watch%3Fv%3DF07gB3FqNDQ)
+Run `just setup` from the project root to build and deploy the stack, write local secrets, apply sample connectors, start port-forwards, and launch the UI. See [the deployment guide](k8s/README.md) for individual commands.
 
-This video walks through the practical aspects of running Kafka (via Redpanda) in Docker Compose, reinforcing the setup steps above.
+RustFS is pinned to **1.0.1** rather than a floating tag. Its [S3 Tables / Iceberg REST catalog support](https://docs.rustfs.com/en/administration/data/s3-tables) is a preview feature. This single-node HTTP stack with shared administrator credentials is for local development, not production. Preview support does not imply complete Iceberg REST compatibility; runtime testing must establish compatibility for the repository's specific connector path.
+
+The sample sink targets `public.users` from `lakehouse.public.users` and enables table auto-creation. The source requires `source_db.public.users`; connector deployment does not create or seed the source table. JSON converters disable schemas and preserve the Debezium CDC envelope.
+
+## 5. Fresh Warehouse Cutover and Rollback
+
+Replacing Garage and Nessie starts a **fresh RustFS warehouse**. It does not import legacy objects, catalog metadata, or existing Iceberg tables automatically.
+
+Deployment retains the legacy Garage/Nessie PVCs. Preserve those volumes and save the old connector configurations before cutover. Namespace destruction or explicit PVC deletion can remove the rollback data.
+
+To roll back, restore the previous git revision, redeploy its Garage/Nessie stack using the retained volumes, and restore the corresponding connector configurations. Do not point the old catalog at the new RustFS warehouse as a substitute for migration.
+
+Connector offsets are not reset automatically on cutover or rollback. Already-consumed records will not be replayed simply by switching catalog endpoints. Any replay or offset reset requires a separate explicit decision, including consideration of duplicate writes and the desired source history.

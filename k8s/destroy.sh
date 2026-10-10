@@ -27,19 +27,10 @@ if kubectl get kafka my-cluster -n ${NAMESPACE} &> /dev/null; then
     kubectl delete -f 02-kafka.yaml
 fi
 
-if kubectl get deployment nessie -n ${NAMESPACE} &> /dev/null; then
-    echo "  - Nessie"
-    kubectl delete -f 05-iceberg-catalog.yaml
-fi
-
-if kubectl get job garage-setup -n ${NAMESPACE} &> /dev/null; then
-    echo "  - Garage Setup (legacy)"
-    kubectl delete job garage-setup -n ${NAMESPACE} --ignore-not-found=true || true
-fi
-
-if kubectl get statefulset garage -n ${NAMESPACE} &> /dev/null; then
-    echo "  - Garage"
-    kubectl delete -f 04-garage.yaml
+if kubectl get statefulset rustfs -n ${NAMESPACE} &> /dev/null; then
+    echo "  - RustFS S3 + Iceberg catalog"
+    kubectl delete -f 05-rustfs-init.yaml --ignore-not-found=true
+    kubectl delete -f 04-rustfs.yaml
 fi
 
 if kubectl get statefulset postgres -n ${NAMESPACE} &> /dev/null; then

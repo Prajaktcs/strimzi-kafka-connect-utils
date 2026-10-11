@@ -1,4 +1,84 @@
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: connect-metrics
+  namespace: kafka
+data:
+  metrics-config.yml: |
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      # ObjectName properties have no guaranteed order. Lookaheads select full
+      # property keys, not substrings, and retain every identity dimension.
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=connector-task-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))[^>]*><>status: ([a-z-]+)'
+        name: kafka_connect_connector_task_status
+        value: 1
+        type: GAUGE
+        labels:
+          connector: "$1"
+          task: "$2"
+          status: "$3"
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=(source-task|sink-task|connector-task|task-error)-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))[^>]*><>([a-z-]+-total)'
+        name: kafka_connect_$1_$4
+        type: COUNTER
+        labels:
+          connector: "$2"
+          task: "$3"
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=(source-task|sink-task|connector-task|task-error)-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))[^>]*><>([a-z-]+)'
+        name: kafka_connect_$1_$4
+        type: GAUGE
+        labels:
+          connector: "$2"
+          task: "$3"
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=connector-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))[^>]*><>status: ([a-z-]+)'
+        name: kafka_connect_connector_status
+        value: 1
+        type: GAUGE
+        labels:
+          connector: "$1"
+          status: "$2"
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=connect-worker-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))[^>]*><>([a-z-]+)'
+        name: kafka_connect_worker_$2
+        type: GAUGE
+        labels:
+          connector: "$1"
+      - pattern: 'kafka\.connect<type=connect-worker-metrics><>([a-z-]+-total)'
+        name: kafka_connect_worker_$1
+        type: COUNTER
+      - pattern: 'kafka\.connect<type=connect-worker-metrics><>([a-z-]+)'
+        name: kafka_connect_worker_$1
+        type: GAUGE
+      - pattern: 'kafka\.connect<type=connect-worker-rebalance-metrics><>([a-z-]+-total)'
+        name: kafka_connect_worker_rebalance_$1
+        type: COUNTER
+      - pattern: 'kafka\.connect<type=connect-worker-rebalance-metrics><>([a-z-]+)'
+        name: kafka_connect_worker_rebalance_$1
+        type: GAUGE
+      - pattern: 'kafka\.connect<type=connect-coordinator-metrics><>(assigned-connectors|assigned-tasks)'
+        name: kafka_connect_coordinator_$1
+        type: GAUGE
+      # Debezium's supported key is custom.metric.tags. No connector/task is
+      # guessed from server/topic.prefix. Untagged beans deliberately do not match.
+      - pattern: 'debezium\.([^<]+)<(?=(?:[^>]*, )?type=connector-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))(?=(?:[^>]*, )?server=([^,>]+)(?:,|>))(?=(?:[^>]*, )?context=([^,>]+)(?:,|>))[^>]*><>(total_number_of_[a-z_]*events_seen|number_of_erroneous_events|number_of_events_filtered|number_of_committed_transactions)'
+        name: debezium_$1_$6_total
+        attrNameSnakeCase: true
+        type: COUNTER
+        labels:
+          connector: "$2"
+          task: "$3"
+          server: "$4"
+          context: "$5"
+      - pattern: 'debezium\.([^<]+)<(?=(?:[^>]*, )?type=connector-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))(?=(?:[^>]*, )?server=([^,>]+)(?:,|>))(?=(?:[^>]*, )?context=([^,>]+)(?:,|>))[^>]*><>([a-zA-Z_][a-zA-Z0-9_]*)'
+        name: debezium_$1_$6
+        attrNameSnakeCase: true
+        type: GAUGE
+        labels:
+          connector: "$2"
+          task: "$3"
+          server: "$4"
+          context: "$5"
+---
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaConnect
 metadata:
@@ -14,6 +94,12 @@ spec:
   offsetStorageTopic: connect-cluster-offsets
   configStorageTopic: connect-cluster-configs
   statusStorageTopic: connect-cluster-status
+  metricsConfig:
+    type: jmxPrometheusExporter
+    valueFrom:
+      configMapKeyRef:
+        name: connect-metrics
+        key: metrics-config.yml
   config:
     # Replication factors for local development (single broker)
     config.storage.replication.factor: 1

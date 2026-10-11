@@ -7,6 +7,7 @@ use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use strimzi_ops_core::metrics::{MetricState, STALE_AFTER};
 use strimzi_ops_core::{NotificationMonitor, SnapshotTracker};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
@@ -16,8 +17,8 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    render, HtmlResult, MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCard,
-    SnapshotCards,
+    render, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage, MonitorPage,
+    MonitorResultsPage, SnapshotCard, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -26,14 +27,54 @@ const MIN_DURATION: u64 = 10;
 const MAX_DURATION: u64 = 300;
 
 pub async fn monitor(State(state): State<AppState>) -> HtmlResult {
-    if state.bootstrap_servers().is_none() {
-        return render(MissingBootstrapPage { active: "monitor" });
-    }
     render(MonitorPage {
         active: "monitor",
         topic: DEFAULT_TOPIC.to_owned(),
         duration: DEFAULT_DURATION,
         error: None,
+        has_bootstrap: state.bootstrap_servers().is_some(),
+    })
+}
+
+/// Browsers only read the application cache; this handler never scrapes workers.
+pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
+    let cached = state.metrics_snapshot();
+    let elapsed = cached.received.elapsed();
+    let expired = elapsed >= STALE_AFTER;
+    let panel_state = if expired && cached.snapshot.state == MetricState::Available {
+        MetricState::Stale
+    } else {
+        cached.snapshot.state
+    };
+    let workers = cached
+        .snapshot
+        .workers
+        .iter()
+        .map(|worker| {
+            let age = worker.age_secs.map_or_else(
+                || "never".to_owned(),
+                |age| format!("{} s", age.saturating_add(elapsed.as_secs())),
+            );
+            MetricsWorkerView {
+                worker: &worker.worker,
+                state: if expired && worker.state == MetricState::Available {
+                    MetricState::Stale
+                } else {
+                    worker.state
+                },
+                age,
+                error: worker.error.as_deref(),
+                samples: worker
+                    .samples
+                    .iter()
+                    .filter(|sample| sample.value.is_finite())
+                    .collect(),
+            }
+        })
+        .collect();
+    render(MetricsPanel {
+        state: panel_state,
+        workers,
     })
 }
 
@@ -58,6 +99,7 @@ pub async fn monitor_submit(
             topic: DEFAULT_TOPIC.to_owned(),
             duration: form.duration.clamp(MIN_DURATION, MAX_DURATION),
             error: Some("Notification topic is required".to_owned()),
+            has_bootstrap: true,
         });
     }
 

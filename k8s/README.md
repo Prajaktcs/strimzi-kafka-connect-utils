@@ -143,6 +143,7 @@ Then configure `secrets.toml`:
 [kafka]
 bootstrap_servers = "localhost:9092"
 connect_url = "http://localhost:8083"
+metrics_targets_file = ".local/connect-metrics.toml"
 
 [storage]
 type = "s3"
@@ -235,6 +236,104 @@ remained active, and existing PostgreSQL, Kafka, RustFS, and legacy
 Garage/Nessie PVCs remained bound. Before the upgrade, the existing rows also
 survived a RustFS pod restart and initializer rerun.
 
+## Per-worker Connect and Debezium Metrics
+
+`03-kafka-connect.yaml` applies the exporter ConfigMap **before** the KafkaConnect
+resource and enables Strimzi's `jmxPrometheusExporter` on pod port **9404** at
+`/metrics`. It exports actual Connect worker/rebalance, connector status, task
+status, source/sink record totals and task errors, plus numeric Debezium snapshot
+and streaming attributes. This does not deploy Prometheus, compute rates, or
+derive lag/health from Connect REST status.
+
+Use the background supervisor, not a Service forward (a Service selects just
+one worker):
+
+```bash
+just sync-secrets
+just port-forward-all
+just status-forwards
+# Inspect the current per-pod addresses, then curl one of those /metrics URLs:
+cat .local/connect-metrics.toml
+just stop-forwards
+```
+
+The supervisor discovers **all** pods with
+`strimzi.io/name=my-connect-cluster-connect` every 15 seconds (API requests have a
+5-second deadline). Each pod retains a dedicated localhost port starting at
+9404, advancing past occupied ports without killing unrelated listeners. It
+tracks pod UIDs to restart forwards after same-name recreation, adds workers on
+scale-up, and removes them only after a successful discovery proves them absent.
+Pending, unready and terminating pods remain in the targets file: an unreachable
+localhost port 0 represents their collection failure instead of hiding them.
+Discovery failures retain known identities, stop their forwards and publish
+unreachable targets; the next successful discovery repairs them. An empty
+successful discovery publishes `workers = []`. Stopping forwards also retains
+known identities with unreachable targets. Background PIDs/logs live under
+`.local/port-forwards/metrics`; `stop-forwards` manages the supervisor and its
+children, and `status-forwards` shows each worker. Use
+`NAMESPACE=<namespace> CONNECT_CLUSTER=<cluster> bash scripts/local-dev.sh port-forward-all`
+to change metrics discovery (the other local service names remain unchanged).
+The TOML file is atomically replaced with mode 0600 on each discovery.
+
+Configure `[kafka] metrics_targets_file = ".local/connect-metrics.toml"` in
+`secrets.toml` (`just sync-secrets` does this). Relative paths resolve against the
+secrets file directory. The server rereads the targets file on every collection,
+so membership changes do not require a UI restart. For an existing cluster,
+provide one private exporter endpoint per worker in a separate, owner-readable
+file instead of an aggregate/load-balanced endpoint:
+
+```toml
+[[workers]]
+id = "connect-worker-0"
+url = "https://worker-0.metrics.example.internal/metrics"
+bearer_token = "replace-with-private-token" # optional, sent only by the server
+
+[[workers]]
+id = "connect-worker-1"
+url = "https://worker-1.metrics.example.internal/metrics"
+```
+
+Protect that file (`chmod 600`) and do not commit tokens. Endpoint URLs, bearer
+tokens and raw exporter/error responses are not sent to the browser. The local
+exporter has no authentication: it is reachable only through the cluster and
+explicit Kubernetes-authorized, IPv4-loopback forwards; there is no
+NodePort, Ingress, hostPort or public metrics Service in these manifests.
+**Strimzi 1.2.0's generated NetworkPolicy permits port 9404 from any in-cluster
+pod.** Kubernetes policies are additive, so adding another restrictive policy
+does not revoke that allow. Production operators must manage the generated
+policy/cluster network controls or put authenticated private endpoints in front
+of exporters; the local manifest is not an in-cluster authentication boundary.
+
+The UI server collects at most 32 workers concurrently, caps each response at
+2 MiB, uses a 3-second request timeout, and waits 10 seconds after each collection
+round before the next. Browser refreshes read the cached snapshot, not exporters.
+Samples keep the complete identity `(worker, metric name, all labels)`, including
+Connect `connector`/`task` and Debezium `server`/`context`; workers/tasks are never
+silently combined. Missing or non-finite values are unavailable, not zero.
+
+| State | Meaning |
+| --- | --- |
+| available | A successful scrape produced usable samples; a real reported zero remains zero. |
+| unavailable | Metrics are not configured, membership/exporter is empty, or a requested sample is missing/non-finite. |
+| collection error | A configured target or targets file failed before any successful data was collected. |
+| stale | A failed scrape/file refresh retains previously good samples, or cached samples are older than 30 seconds. Sample age is shown; retained values are not current. |
+
+The local PostgreSQL source explicitly uses
+`custom.metric.tags: connector=postgres-source-connector,task=0`. This is
+Debezium's supported property name, **not** `metrics.custom.tags`. PostgreSQL
+has one Connect task, so `task=0` is accurate here; do not copy this static task
+tag to a multi-task connector without its own valid task identity. Keep
+`connector` equal to the KafkaConnector name. The exporter captures tags
+regardless of ObjectName property order and retains Debezium's logical
+`server` (`topic.prefix`), `context` and domain; untagged Debezium MBeans are
+not assigned a guessed connector/task.
+
+Primary configuration references:
+- [Strimzi 1.2.0 Kafka Connect exporter example](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/examples/metrics/kafka-connect-metrics.yaml).
+- [JMX Exporter 1.6.0 rule input, ordering, labels and snake-case semantics](https://prometheus.github.io/jmx_exporter/1.6.0/configuration/rules/).
+- [Debezium PostgreSQL custom metric tags and monitoring](https://debezium.io/documentation/reference/3.7/connectors/postgresql.html#postgresql-monitoring).
+- [Strimzi 1.2.0 generated Connect NetworkPolicy](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/cluster-operator/src/main/java/io/strimzi/operator/cluster/model/KafkaConnectCluster.java).
+
 ## Manifest Details
 
 ### 00-namespace.yaml
@@ -248,6 +347,8 @@ Deploys single-node Kafka 4.3.1 cluster via Strimzi using **KRaft** and **KafkaN
 
 ### 03-kafka-connect.yaml
 Deploys Kafka Connect 4.3.1 with Debezium 3.7.0.Final PostgreSQL + Iceberg 1.12.0 sink connectors. Uses a custom local image `my-connect-cluster:0.0.4`.
+Also applies `connect-metrics` and enables the private pod exporter; see
+[per-worker metrics](#per-worker-connect-and-debezium-metrics).
 
 `Dockerfile.connect` assembles the Iceberg 1.12.0 plugin and runtime dependencies
 from Maven Central in a pinned Maven build stage rather than using the older

@@ -1,0 +1,31 @@
+<p role="status">Collection: <strong>{{ state }}</strong>. Shared collection waits 10 seconds between rounds; stale values are historical, not live.</p>
+{% if workers.is_empty() %}
+<p class="notice">Metrics unavailable. Configure <code>kafka.metrics_targets_file</code> in server-side secrets and start <code>just port-forward-all</code>.</p>
+{% endif %}
+{% for worker in workers %}
+<section>
+  <h4>{{ worker.worker }} — {{ worker.state }}</h4>
+  <p>Last successful collection age: {{ worker.age }}.</p>
+  {% if let Some(error) = worker.error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if worker.state == strimzi_ops_core::metrics::MetricState::Stale %}
+  <p class="notice">Stale: retained last-good samples below must not be interpreted as current readings.</p>
+  {% endif %}
+  {% if worker.samples.is_empty() %}
+  <p class="notice">No finite Connect or Debezium samples available.</p>
+  {% else %}
+  <details>
+    <summary>Raw Connect and Debezium samples ({{ worker.samples.len() }})</summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Metric</th><th>Identity labels</th><th>Observed value</th></tr></thead>
+        <tbody>
+        {% for sample in worker.samples %}
+        <tr><td><code>{{ sample.name }}</code></td><td>{% for (key, value) in sample.labels %}<code>{{ key }}={{ value }}</code> {% endfor %}</td><td>{{ sample.value }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+</section>
+{% endfor %}

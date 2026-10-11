@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use strimzi_ops_core::ConnectionSettings;
 
 use crate::error::Error;
+use crate::metrics::{CachedMetrics, MetricsCache};
 use crate::result::Result;
 
 /// Shared application state for Axum handlers.
@@ -10,11 +13,25 @@ use crate::result::Result;
 #[derive(Clone)]
 pub struct AppState {
     pub settings: ConnectionSettings,
+    metrics: Arc<MetricsCache>,
 }
 
 impl AppState {
     pub fn new(settings: ConnectionSettings) -> Self {
-        Self { settings }
+        Self {
+            settings,
+            metrics: MetricsCache::new(),
+        }
+    }
+
+    /// Start the application's single metrics collector, never a collector per viewer.
+    pub fn start_metrics(&self) -> Option<tokio::task::JoinHandle<()>> {
+        self.metrics
+            .start(self.settings.metrics_targets_file.clone())
+    }
+
+    pub(crate) fn metrics_snapshot(&self) -> Arc<CachedMetrics> {
+        self.metrics.latest()
     }
 
     pub fn has_connect_url(&self) -> bool {

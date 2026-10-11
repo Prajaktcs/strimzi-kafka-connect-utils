@@ -3,6 +3,7 @@
   "config": {
     "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
     "tasks.max": "1",
+    "custom.metric.tags": "connector=postgres-source-connector,task=0",
     "database.hostname": "postgres-source",
     "database.port": "5432",
     "database.user": "postgres",

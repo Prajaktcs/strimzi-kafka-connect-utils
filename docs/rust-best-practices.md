@@ -78,3 +78,11 @@ Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and `R
 4. Python package and `uv` tooling removed — done
 
 Default UI is `just run` / `just ui` (`strimzi-ui`). Monitor streams a duration-bounded Kafka consume session over SSE, with one consumer group per connection; disconnecting cancels consumption. Control Logs uses `kubectl` on `PATH`.
+
+Connect/Debezium metrics live in `strimzi-ops-core::metrics`: a synchronous,
+bounded per-worker collector and Prometheus parser with explicit availability
+states. The UI owns one application-wide collector, executes each round with
+`spawn_blocking`, and serves only cached samples to Monitor browsers. Blocking
+HTTP clients are constructed and dropped inside the round, never retained
+across an async wait. Worker snapshots share immutable sample storage rather
+than copying every metric name and label on each refresh.

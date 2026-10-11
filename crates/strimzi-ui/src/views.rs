@@ -127,6 +127,7 @@ pub struct ControlRow {
     pub tasks_running: usize,
     pub tasks_total: usize,
     pub focused: bool,
+    pub is_source: bool,
 }
 
 #[derive(Template, WebTemplate)]

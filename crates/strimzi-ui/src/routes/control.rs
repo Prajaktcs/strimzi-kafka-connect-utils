@@ -65,6 +65,7 @@ fn build_control_page(
             tasks_running,
             tasks_total: tasks.len(),
             focused,
+            is_source: status.get("type").and_then(Value::as_str) == Some("source"),
         });
     }
     connectors.sort_by(|a, b| a.name.cmp(&b.name));

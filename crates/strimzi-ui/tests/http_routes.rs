@@ -93,6 +93,45 @@ async fn control_missing_config_page() {
 }
 
 #[tokio::test]
+async fn show_snapshot_only_for_source_connectors() {
+    let server = httpmock::MockServer::start();
+    let status = server.mock(|when, then| {
+        when.method(httpmock::Method::GET)
+            .path("/connectors")
+            .query_param("expand", "status")
+            .query_param("expand", "info");
+        then.status(200).json_body(serde_json::json!({
+            "postgres-source": {"status": {"type": "source"}},
+            "iceberg-sink": {"status": {"type": "sink"}},
+            "unknown": {"status": {}}
+        }));
+    });
+    let app = router(AppState::new(ConnectionSettings {
+        connect_url: Some(server.base_url()),
+        ..ConnectionSettings::default()
+    }));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/control")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = std::str::from_utf8(&body).unwrap();
+    assert!(text.contains("href=\"/control/postgres-source/snapshot\""));
+    assert!(!text.contains("href=\"/control/iceberg-sink/snapshot\""));
+    assert!(!text.contains("href=\"/control/unknown/snapshot\""));
+    assert!(text.contains("action=\"/control/iceberg-sink/restart\""));
+    status.assert();
+}
+
+#[tokio::test]
 async fn root_redirects_to_dashboard() {
     let state = AppState::new(ConnectionSettings::default());
     let app = router(state);

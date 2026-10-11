@@ -24,7 +24,7 @@ url.workspace = true
 uuid = { workspace = true, optional = true }
 
 [dev-dependencies]
-httpmock = "0.7"
+httpmock.workspace = true
 
 [lints]
 workspace = true

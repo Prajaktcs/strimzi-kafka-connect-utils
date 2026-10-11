@@ -218,7 +218,7 @@ Manage your connectors:
    - **Resume**: Resume a paused connector
    - **Pause**: Pause a running connector
    - **Restart**: Restart a connector
-   - **Trigger Snapshot**: Initiate a new snapshot
+   - **Trigger Snapshot**: Initiate a new snapshot (shown only for connectors Kafka Connect reports as `source`, never for sinks)
    - **Logs**: View recent Connect pod logs filtered for the connector (requires `kubectl`)
 5. Edit configuration and update as needed
 

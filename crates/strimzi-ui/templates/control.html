@@ -28,7 +28,9 @@
         <form method="post" action="/control/{{ c.name }}/pause"><button type="submit">Pause</button></form>
         {% endif %}
         <form method="post" action="/control/{{ c.name }}/restart"><button type="submit">Restart</button></form>
+        {% if c.is_source %}
         <a class="button secondary" href="/control/{{ c.name }}/snapshot">Snapshot</a>
+        {% endif %}
         <a class="button secondary" href="/control/{{ c.name }}/yaml">YAML</a>
         <a class="button secondary" href="/control/{{ c.name }}/edit">Edit</a>
         <a class="button secondary" href="/control/{{ c.name }}/logs">Logs</a>

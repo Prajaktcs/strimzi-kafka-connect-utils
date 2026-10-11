@@ -30,6 +30,7 @@ askama = "0.14"
 askama_web = { version = "0.14", features = ["axum-0.8"] }
 axum = "0.8"
 clap = { version = "4.5", features = ["derive"] }
+httpmock = "0.7"
 rdkafka = { version = "0.37", features = ["cmake-build"] }
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

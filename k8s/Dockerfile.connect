@@ -1,11 +1,100 @@
-FROM quay.io/strimzi/kafka:1.1.0-kafka-4.3.0
+# Assemble the complete local REST/S3 sink plugin from published Maven artifacts.
+# Iceberg's kafka-connect-runtime distribution is not published to Maven Central.
+# Match apache-iceberg-1.12.0/kafka-connect/build.gradle, without unused cloud catalogs.
+FROM maven:3.10.0-eclipse-temurin-21 AS iceberg-plugin
+WORKDIR /build
+COPY <<'EOF' pom.xml
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>local.strimzi</groupId>
+  <artifactId>iceberg-connect-plugin</artifactId>
+  <version>1</version>
+  <properties>
+    <iceberg.version>1.12.0</iceberg.version>
+  </properties>
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>com.fasterxml.jackson</groupId><artifactId>jackson-bom</artifactId>
+        <version>2.22.2</version><type>pom</type><scope>import</scope>
+      </dependency>
+      <!-- Match the upstream runtime's forced dependency upgrades. -->
+      <dependency>
+        <groupId>org.codehaus.jettison</groupId><artifactId>jettison</artifactId><version>1.5.7</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial.snappy</groupId><artifactId>snappy-java</artifactId><version>1.1.10.8</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.28.0</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop.thirdparty</groupId><artifactId>hadoop-shaded-guava</artifactId><version>1.5.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.woodstox</groupId><artifactId>woodstox-core</artifactId><version>6.7.0</version>
+      </dependency>
+      <dependency>
+        <groupId>commons-beanutils</groupId><artifactId>commons-beanutils</artifactId><version>1.11.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-kafka-connect</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-kafka-connect-transforms</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-parquet</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-orc</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-aws</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <!-- The same-version upstream bundle supplies AWS SDK/SigV4/S3 dependencies,
+         including its shaded HTTP clients; iceberg-aws alone is a thin JAR. -->
+    <dependency>
+      <groupId>org.apache.iceberg</groupId><artifactId>iceberg-aws-bundle</artifactId><version>${iceberg.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.hadoop</groupId><artifactId>hadoop-common</artifactId><version>3.4.3</version>
+      <exclusions>
+        <exclusion><groupId>log4j</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.slf4j</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>ch.qos.reload4j</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.apache.avro</groupId><artifactId>avro</artifactId></exclusion>
+        <exclusion><groupId>com.google.guava</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>com.google.protobuf</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.apache.curator</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.apache.zookeeper</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.apache.kerby</groupId><artifactId>*</artifactId></exclusion>
+        <exclusion><groupId>org.apache.hadoop</groupId><artifactId>hadoop-auth</artifactId></exclusion>
+        <exclusion><groupId>org.apache.commons</groupId><artifactId>commons-configuration2</artifactId></exclusion>
+        <exclusion><groupId>org.apache.hadoop.thirdparty</groupId><artifactId>hadoop-shaded-protobuf_3_7</artifactId></exclusion>
+        <exclusion><groupId>org.eclipse.jetty</groupId><artifactId>*</artifactId></exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+</project>
+EOF
+# Kafka APIs/clients and logging belong to the Strimzi worker, not the plugin.
+RUN mvn -B -ntp org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies \
+    -DincludeScope=runtime -DoutputDirectory=/opt/iceberg-plugin \
+    -DexcludeGroupIds=org.apache.kafka,org.slf4j \
+    -DexcludeArtifactIds=activation,jspecify
+
+FROM quay.io/strimzi/kafka:1.2.0-kafka-4.3.1
 USER root:root
-RUN mkdir -p /opt/kafka/plugins/debezium /opt/kafka/plugins/iceberg \
-    && curl -f -L https://repo1.maven.org/maven2/io/debezium/debezium-connector-postgres/3.6.0.Final/debezium-connector-postgres-3.6.0.Final-plugin.tar.gz \
-      | tar xz -C /opt/kafka/plugins/debezium --strip-components=1 \
-    && curl -f -L -o /tmp/iceberg-kafka-connect.zip \
-      https://hub-downloads.confluent.io/api/plugins/iceberg/iceberg-kafka-connect/versions/1.9.2/iceberg-iceberg-kafka-connect-1.9.2.zip \
-    && python3 -c "import pathlib,zipfile; zf=zipfile.ZipFile('/tmp/iceberg-kafka-connect.zip'); zf.extractall('/tmp/iceberg-dist'); dest=pathlib.Path('/opt/kafka/plugins/iceberg'); \
-[p.rename(dest/p.name) for p in pathlib.Path('/tmp/iceberg-dist').rglob('*.jar')]" \
-    && rm -rf /tmp/iceberg-kafka-connect.zip /tmp/iceberg-dist
+RUN mkdir -p /opt/kafka/plugins/debezium \
+    && curl -f -L -o /tmp/debezium-postgres.tar.gz \
+      https://repo.maven.apache.org/maven2/io/debezium/debezium-connector-postgres/3.7.0.Final/debezium-connector-postgres-3.7.0.Final-plugin.tar.gz \
+    && tar xzf /tmp/debezium-postgres.tar.gz -C /opt/kafka/plugins/debezium --strip-components=1 \
+    && rm /tmp/debezium-postgres.tar.gz
+COPY --from=iceberg-plugin /opt/iceberg-plugin/ /opt/kafka/plugins/iceberg/
 USER 1001

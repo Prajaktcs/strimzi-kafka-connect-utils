@@ -35,7 +35,7 @@ Key data flows:
 - `crates/strimzi-ops/src/` — CLI: `lib.rs` (clap `Cli` + subcommands), `main.rs`, `bin/strimzi_lint.rs`
 - `crates/strimzi-ui/src/` — `main.rs`, `state.rs`, `blocking.rs`, `routes/` (dashboard/control/monitor), `views.rs` (Askama + Error→HTTP mapping)
 - `crates/strimzi-ui/tests/http_routes.rs` — sole integration test dir
-- `k8s/` — local-dev stack (namespace `kafka`: Strimzi 1.1.0, Kafka 4.3.0, Connect 4.3.0 with Debezium 3.6.0 + Iceberg sink, Postgres 18.4, RustFS 1.0.1 S3 + built-in Iceberg REST catalog) + `deploy.sh`/`destroy.sh`/`Dockerfile.connect`
+- `k8s/` — local-dev stack (namespace `kafka`: Strimzi 1.2.0, Kafka 4.3.1, Connect 4.3.1 image `my-connect-cluster:0.0.4` with Debezium 3.7.0.Final + Iceberg 1.12.0 sink, Postgres 18.6-alpine, RustFS 1.0.1 S3 + built-in Iceberg REST catalog) + `deploy.sh`/`destroy.sh`/`Dockerfile.connect`; pin provenance and state-preserving rollback requirements in `k8s/README.md`
 - `scripts/local-dev.sh` — helpers behind the port-forward/secrets/cluster just recipes
 - `examples/` — sample connectors (Debezium Postgres, Iceberg sink, lint-exemption demo); linted by CI
 - `docs/rust-best-practices.md`, `.cursor/rules/` — style standard (must follow)
@@ -79,7 +79,7 @@ Ports: Connect `8083`, Kafka `9092`, Postgres `5432`, RustFS S3/catalog `9000` (
 - `justfile`, `.github/workflows/ci.yml` — local and CI command surface
 - `.lintrc.toml` — `strimzi-lint` rule config (not a Python linter)
 - `secrets.toml` (gitignored; template `secrets.toml.example`)
-- `k8s/Dockerfile.connect` — local Connect image (`my-connect-cluster:0.0.3`)
+- `k8s/Dockerfile.connect` — local Connect image (`my-connect-cluster:0.0.4`)
 
 ## Runtime/Tooling Preferences
 

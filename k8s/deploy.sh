@@ -2,7 +2,7 @@
 set -e
 
 NAMESPACE="kafka"
-STRIMZI_VERSION="1.1.0"
+STRIMZI_VERSION="1.2.0"
 
 echo "Deploying Strimzi Ops local development environment"
 echo "======================================================="
@@ -65,7 +65,7 @@ for rb in strimzi-cluster-operator strimzi-cluster-operator-watched strimzi-clus
 done
 
 echo "Waiting for Strimzi operator to be ready..."
-kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n ${NAMESPACE} --timeout=300s
+kubectl rollout status deployment/strimzi-cluster-operator -n "${NAMESPACE}" --timeout=300s
 echo "Strimzi operator ${STRIMZI_VERSION} is ready"
 echo ""
 
@@ -80,7 +80,7 @@ kubectl apply -f 01-postgres.yaml
 
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL to be ready..."
-kubectl wait --for=condition=ready pod -l app=postgres -n ${NAMESPACE} --timeout=300s
+kubectl rollout status statefulset/postgres -n "${NAMESPACE}" --timeout=300s
 echo "PostgreSQL is ready"
 
 # RustFS serves both S3 and the built-in Iceberg REST catalog.
@@ -110,6 +110,8 @@ kubectl delete service garage nessie -n "${NAMESPACE}" --ignore-not-found=true
 # Deploy Kafka
 echo "  - Kafka cluster"
 kubectl apply -f 02-kafka.yaml
+KAFKA_GENERATION="$(kubectl get kafka/my-cluster -n "${NAMESPACE}" -o jsonpath='{.metadata.generation}')"
+kubectl wait kafka/my-cluster -n "${NAMESPACE}" --for=jsonpath='{.status.observedGeneration}'="${KAFKA_GENERATION}" --timeout=600s
 
 # Wait for Kafka to be ready
 echo "Waiting for Kafka cluster to be ready (this may take a few minutes)..."
@@ -119,6 +121,8 @@ echo "Kafka cluster is ready"
 # Deploy Kafka Connect
 echo "  - Kafka Connect"
 kubectl apply -f 03-kafka-connect.yaml
+CONNECT_GENERATION="$(kubectl get kafkaconnect/my-connect-cluster -n "${NAMESPACE}" -o jsonpath='{.metadata.generation}')"
+kubectl wait kafkaconnect/my-connect-cluster -n "${NAMESPACE}" --for=jsonpath='{.status.observedGeneration}'="${CONNECT_GENERATION}" --timeout=900s
 
 # Wait for Kafka Connect to be ready
 echo "Waiting for Kafka Connect to be ready (this may take a few minutes for first build)..."

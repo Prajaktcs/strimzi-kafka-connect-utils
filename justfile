@@ -7,7 +7,7 @@
 #   1. start Colima+k8s if needed
 #   2. ensure docker buildx (Homebrew plugin; avoids legacy builder warning)
 #   3. build Connect image with Debezium + Iceberg sink
-#   4. deploy Strimzi 1.1.0 + Kafka 4.3.0 + Postgres + RustFS 1.0.1
+#   4. deploy Strimzi 1.2.0 + Kafka 4.3.1 + Postgres + RustFS 1.0.1
 #      (wipes legacy v1beta2 Strimzi CRDs if present; installs operator into kafka ns)
 #   5. write secrets.toml with local-dev RustFS keys
 #   6. apply sample Postgres source + Iceberg sink connectors
@@ -30,11 +30,11 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 # --- Local stack pins (keep in sync with k8s/ manifests) ---
 namespace := "kafka"
-strimzi_version := "1.1.0"
-kafka_version := "4.3.0"
-debezium_version := "3.6.0.Final"
-iceberg_connect_version := "1.9.2"
-connect_image := "my-connect-cluster:0.0.3"
+strimzi_version := "1.2.0"
+kafka_version := "4.3.1"
+debezium_version := "3.7.0.Final"
+iceberg_connect_version := "1.12.0"
+connect_image := "my-connect-cluster:0.0.4"
 helper := "scripts/local-dev.sh"
 
 # RustFS credentials (LOCAL DEV ONLY).
@@ -59,7 +59,7 @@ setup: ensure-cluster build-connect deploy sync-secrets apply-connector port-for
     @echo "  Console     : http://127.0.0.1:9001 (LOCAL DEV ONLY: rustfsadmin / rustfsadmin)"
     @echo "  UI          : http://127.0.0.1:8501"
     @echo ""
-    @echo "Stack: Strimzi {{ strimzi_version }} / Kafka {{ kafka_version }} / Debezium {{ debezium_version }}"
+    @echo "Stack: Strimzi {{ strimzi_version }} / Kafka {{ kafka_version }} / Debezium {{ debezium_version }} / Iceberg {{ iceberg_connect_version }}"
     @echo "Starting strimzi-ui..."
     just ui
 

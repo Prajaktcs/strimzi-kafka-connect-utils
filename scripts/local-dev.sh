@@ -54,12 +54,12 @@ ensure_cluster() {
 
   if ! command -v colima >/dev/null 2>&1; then
     echo "Cannot connect to Kubernetes and colima is not installed."
-    echo "Start a cluster first, e.g.: colima start --kubernetes --cpu 4 --memory 4"
+    echo "Start a cluster first, e.g.: colima start --kubernetes --cpu 4 --memory 8"
     exit 1
   fi
 
   echo "No Kubernetes cluster reachable. Starting Colima with Kubernetes..."
-  colima start --kubernetes --cpu 4 --memory 4
+  colima start --kubernetes --cpu 4 --memory 8
 
   echo "Waiting for Kubernetes API..."
   for _ in $(seq 1 60); do

@@ -16,12 +16,14 @@ The supported local deployment uses the manifests and scripts under `k8s/`, not 
 
 | Component | Version / role |
 | --- | --- |
-| Strimzi | 1.1.0 operator |
-| Kafka | 4.3.0, single-node KRaft |
-| Kafka Connect | 4.3.0, custom local image with Debezium 3.6.0 and Iceberg sink |
-| PostgreSQL | 18.4 Alpine, CDC source |
+| Strimzi | 1.2.0 operator |
+| Kafka | 4.3.1, single-node KRaft |
+| Kafka Connect | 4.3.1, local image `my-connect-cluster:0.0.4` with Debezium 3.7.0.Final and Iceberg 1.12.0 sink |
+| PostgreSQL | 18.6 Alpine, CDC source |
 | RustFS | **1.0.1**, S3 storage and built-in Iceberg REST catalog |
 | Application | Rust core library, CLI, and web UI |
+
+Runtime pins and upgrade/rollback state requirements are documented in [the deployment guide](k8s/README.md#runtime-pin-provenance).
 
 Data flows from PostgreSQL through Debezium into Kafka, then through the Iceberg sink into RustFS. RustFS owns both object storage and the Iceberg REST catalog; there is no separate catalog service.
 
@@ -86,5 +88,7 @@ Replacing Garage and Nessie starts a **fresh RustFS warehouse**. It does not imp
 Deployment retains the legacy Garage/Nessie PVCs. Preserve those volumes and save the old connector configurations before cutover. Namespace destruction or explicit PVC deletion can remove the rollback data.
 
 To roll back, restore the previous git revision, redeploy its Garage/Nessie stack using the retained volumes, and restore the corresponding connector configurations. Do not point the old catalog at the new RustFS warehouse as a substitute for migration.
+
+After component upgrades, rollback also requires retained state compatible with the older versions. Preserve all PVCs, PostgreSQL data, Kafka/Connect offsets, and RustFS tables; do not delete or reset them to downgrade.
 
 Connector offsets are not reset automatically on cutover or rollback. Already-consumed records will not be replayed simply by switching catalog endpoints. Any replay or offset reset requires a separate explicit decision, including consideration of duplicate writes and the desired source history.

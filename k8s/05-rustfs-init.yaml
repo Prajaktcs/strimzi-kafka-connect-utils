@@ -11,7 +11,7 @@ spec:
       restartPolicy: Never
       containers:
         - name: init
-          image: curlimages/curl:8.17.0
+          image: curlimages/curl:8.22.0
           env:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:

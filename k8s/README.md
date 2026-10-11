@@ -4,18 +4,35 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 
 ## What Gets Deployed
 
-1. **Strimzi Operator** - v1.1.0 - Kubernetes operator for managing Kafka
-2. **Kafka Cluster** - v4.3.0 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
-3. **Kafka Connect** - v4.3.0 - With Debezium 3.6.0 (PostgreSQL connector)
-4. **PostgreSQL** - v18.4-alpine - Database configured for CDC (Change Data Capture)
+1. **Strimzi Operator** - v1.2.0 - Kubernetes operator for managing Kafka
+2. **Kafka Cluster** - v4.3.1 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
+3. **Kafka Connect** - v4.3.1 - Local image `my-connect-cluster:0.0.4` with Debezium 3.7.0.Final (PostgreSQL connector) and Iceberg 1.12.0 sink
+4. **PostgreSQL** - v18.6-alpine - Database configured for CDC (Change Data Capture)
 5. **RustFS** - **1.0.1** - S3-compatible storage with built-in Iceberg REST catalog (preview)
+
+## Runtime Pin Provenance
+
+Selected latest-stable pins are based on primary upstream sources:
+
+- RustFS **1.0.1**: [latest stable release](https://github.com/rustfs/rustfs/releases/latest).
+- Strimzi **1.2.0**, Kafka/Connect **4.3.1**: [release Kafka version matrix](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/kafka-versions.yaml).
+- Debezium **3.7.0.Final**: [3.7 release notes](https://debezium.io/releases/3.7/release-notes/) and [PostgreSQL connector Maven metadata](https://repo.maven.apache.org/maven2/io/debezium/debezium-connector-postgres/maven-metadata.xml).
+- PostgreSQL **18.6-alpine**: [versioning and supported stable releases](https://www.postgresql.org/support/versioning/); PostgreSQL 19 beta is not a stable pin.
+- Apache Iceberg **1.12.0**: [upstream release](https://github.com/apache/iceberg/releases/tag/apache-iceberg-1.12.0).
+- curl initializer **8.22.0**: [latest stable curl release](https://github.com/curl/curl/releases/tag/curl-8_22_0).
+
+Upgrades must preserve all PVCs, PostgreSQL data, Kafka/Connect offsets, and
+RustFS tables. Rolling back upgraded components requires retained state that
+is compatible with the older versions; reverting image tags alone is not a
+safe downgrade. Do not delete PVCs, reset offsets, or recreate the database or
+warehouse to perform an upgrade or rollback.
 
 ## Prerequisites
 
 - Kubernetes cluster (Colima, Minikube, kind, or Docker Desktop)
 - kubectl installed and configured
 - [just](https://github.com/casey/just) (`brew install just`)
-- Minimum 4GB RAM allocated to your cluster
+- Minimum 8GB RAM allocated to your cluster for the stack and image build
 
 ## Quick Start
 
@@ -47,7 +64,7 @@ You can also run the scripts directly from this directory:
 
 ```bash
 # Start with Kubernetes enabled
-colima start --kubernetes --cpu 4 --memory 4
+colima start --kubernetes --cpu 4 --memory 8
 
 # Verify
 kubectl cluster-info
@@ -56,7 +73,7 @@ kubectl cluster-info
 #### Minikube
 
 ```bash
-minikube start --cpus 4 --memory 4096
+minikube start --cpus 4 --memory 8192
 
 # Verify
 kubectl cluster-info
@@ -111,13 +128,14 @@ Pods:
 
 ### 4. Access Services
 
-Port forward to access from localhost:
+Open a separate terminal for each foreground port-forward:
 
 ```bash
 just port-forward
 just port-forward-kafka
 just port-forward-postgres
 just port-forward-rustfs
+just port-forward-rustfs-console
 ```
 
 Then configure `secrets.toml`:
@@ -207,10 +225,15 @@ CDC, Kafka Connect's Iceberg commit, REST catalog discovery, and S3 file reads,
 not just connector `RUNNING` status. The CDC envelope is retained by design.
 DuckDB is a verification tool, not a dependency of the application or setup.
 
-Verified locally with RustFS **1.0.1**, Iceberg Connect **1.9.2**, and DuckDB
-**1.5.6**: two exact CDC rows were read through the catalog and S3, survived a
-RustFS pod restart and initializer rerun, and a third insert committed after
-restart. Legacy Garage/Nessie PVCs remained bound; their services were stopped.
+Local verification used RustFS **1.0.1**, Strimzi **1.2.0**, Kafka/Connect
+**4.3.1**, Debezium **3.7.0.Final**, PostgreSQL **18.6**, Iceberg Connect
+**1.12.0**, and DuckDB **1.5.6**. The upgraded plugin loaded and both connectors
+ran successfully. Three existing CDC rows remained byte-for-byte equivalent
+through the catalog and S3 after the upgrade; a fourth PostgreSQL insert
+committed with its exact ID, name, email, and `op = 'c'`. The replication slot
+remained active, and existing PostgreSQL, Kafka, RustFS, and legacy
+Garage/Nessie PVCs remained bound. Before the upgrade, the existing rows also
+survived a RustFS pod restart and initializer rerun.
 
 ## Manifest Details
 
@@ -218,13 +241,20 @@ restart. Legacy Garage/Nessie PVCs remained bound; their services were stopped.
 Creates dedicated `kafka` namespace for all resources.
 
 ### 01-postgres.yaml
-Deploys PostgreSQL 18.4 Alpine with logical replication enabled.
+Deploys PostgreSQL 18.6 Alpine with logical replication enabled.
 
 ### 02-kafka.yaml
-Deploys single-node Kafka 4.3.0 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
+Deploys single-node Kafka 4.3.1 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
 
 ### 03-kafka-connect.yaml
-Deploys Kafka Connect with Debezium PostgreSQL + Iceberg sink connectors. Uses a custom local image `my-connect-cluster:0.0.3`.
+Deploys Kafka Connect 4.3.1 with Debezium 3.7.0.Final PostgreSQL + Iceberg 1.12.0 sink connectors. Uses a custom local image `my-connect-cluster:0.0.4`.
+
+`Dockerfile.connect` assembles the Iceberg 1.12.0 plugin and runtime dependencies
+from Maven Central in a pinned Maven build stage rather than using the older
+Confluent Hub 1.9.2 package. The upstream [Kafka Connect build](https://github.com/apache/iceberg/blob/apache-iceberg-1.12.0/kafka-connect/build.gradle)
+defines the plugin dependencies; its runtime distribution is not published to
+Maven Central. Building requires Docker BuildKit and network access to Docker
+Hub and Maven Central, but no host Maven or JDK.
 
 ### 04-rustfs.yaml
 Deploys RustFS 1.0.1 with persistent storage and the `rustfs` service exposing

@@ -202,10 +202,14 @@ Track snapshot progress in real-time:
 1. Start the application: `just run`
 2. Navigate to the **Monitor** page
 3. Configure the notification topic (default: `debezium.notifications`)
-4. Set monitoring duration
+4. Set monitoring duration (10–300 seconds)
 5. Click **Start Monitoring**
 
-The monitor consumes Debezium notifications for the selected duration, then shows snapshot status cards for connectors seen during the session.
+The page opens immediately and streams snapshot status and progress over Server-Sent Events (SSE) during the selected duration. Each viewer has an independent Kafka consumer, so simultaneous sessions receive the same notifications rather than splitting them.
+
+Click **Stop Monitoring** to end a session early; navigating away also releases its consumer. At the deadline, the stream closes and the final cards remain visible. Consumer or connection failures are shown on the page without automatically restarting the session. Sessions start from new notifications and do not persist history. Live monitoring requires JavaScript.
+
+Kafka's advertised broker addresses must be reachable from the UI process. Forwarding only the bootstrap port is insufficient if Kafka advertises cluster-only DNS names.
 
 ### Control (UI)
 
@@ -287,7 +291,7 @@ Cargo workspace (application is Rust-only):
 - `strimzi-ops-core` — lint, Connect client, control (snapshots / YAML export), monitor, k8s helpers, shared settings
 - `strimzi-ops` — primary CLI (`lint`, `connectors`, `cluster`, `snapshot`, `monitor`)
 - `strimzi-lint` — compatibility binary that only exposes `lint`
-- `strimzi-ui` — web UI for Dashboard, Control, timed Monitor, and kubectl logs (Askama + HTMX)
+- `strimzi-ui` — web UI for Dashboard, Control, live Monitor (SSE), and kubectl logs (Askama + HTMX)
 
 ```bash
 cargo run -p strimzi-ops --bin strimzi-lint -- lint examples/debezium-postgres-connector.yaml

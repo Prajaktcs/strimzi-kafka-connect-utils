@@ -74,7 +74,7 @@ Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and `R
 1. Core + lint CLI — done
 2. Connect client / monitor / control as library + CLI — done
 3a. Axum + HTMX Dashboard + Control (`strimzi-ui`); Streamlit removed — done
-3b. Timed Monitor + kubectl logs in Rust UI — done
+3b. Live Monitor (SSE) + kubectl logs in Rust UI — done
 4. Python package and `uv` tooling removed — done
 
-Default UI is `just run` / `just ui` (`strimzi-ui`). Monitor runs a timed Kafka consume session; Control Logs uses `kubectl` on `PATH`.
+Default UI is `just run` / `just ui` (`strimzi-ui`). Monitor streams a duration-bounded Kafka consume session over SSE, with one consumer group per connection; disconnecting cancels consumption. Control Logs uses `kubectl` on `PATH`.

@@ -1,0 +1,15 @@
+{% if snapshots.is_empty() %}
+<p class="notice">No snapshot notifications received.</p>
+{% else %}
+<div class="cards">
+  {% for s in snapshots %}
+  <div class="card snapshot-card">
+    <strong>{{ s.name }}</strong>
+    <p>Status: {{ s.status }} — Progress: {{ s.progress }}%</p>
+    <div class="progress" role="progressbar" aria-label="Snapshot progress for {{ s.name }}" aria-valuenow="{{ s.progress }}" aria-valuemin="0" aria-valuemax="100">
+      <span style="width: {{ s.progress }}%"></span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

@@ -4,19 +4,35 @@ This directory contains Kubernetes manifests and scripts to deploy a complete Ka
 
 ## What Gets Deployed
 
-1. **Strimzi Operator** - v1.1.0 - Kubernetes operator for managing Kafka
-2. **Kafka Cluster** - v4.3.0 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
-3. **Kafka Connect** - v4.3.0 - With Debezium 3.6.0 (PostgreSQL connector)
-4. **PostgreSQL** - v18.4-alpine - Database configured for CDC (Change Data Capture)
-5. **Garage S3** - v2.3.0 - S3-compatible object storage for Iceberg
-6. **Nessie** - v0.108.4 - Iceberg REST catalog
+1. **Strimzi Operator** - v1.2.0 - Kubernetes operator for managing Kafka
+2. **Kafka Cluster** - v4.3.1 - Single-node cluster using **KRaft mode** (ZooKeeper-less)
+3. **Kafka Connect** - v4.3.1 - Local image `my-connect-cluster:0.0.4` with Debezium 3.7.0.Final (PostgreSQL connector) and Iceberg 1.12.0 sink
+4. **PostgreSQL** - v18.6-alpine - Database configured for CDC (Change Data Capture)
+5. **RustFS** - **1.0.1** - S3-compatible storage with built-in Iceberg REST catalog (preview)
+
+## Runtime Pin Provenance
+
+Selected latest-stable pins are based on primary upstream sources:
+
+- RustFS **1.0.1**: [latest stable release](https://github.com/rustfs/rustfs/releases/latest).
+- Strimzi **1.2.0**, Kafka/Connect **4.3.1**: [release Kafka version matrix](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/kafka-versions.yaml).
+- Debezium **3.7.0.Final**: [3.7 release notes](https://debezium.io/releases/3.7/release-notes/) and [PostgreSQL connector Maven metadata](https://repo.maven.apache.org/maven2/io/debezium/debezium-connector-postgres/maven-metadata.xml).
+- PostgreSQL **18.6-alpine**: [versioning and supported stable releases](https://www.postgresql.org/support/versioning/); PostgreSQL 19 beta is not a stable pin.
+- Apache Iceberg **1.12.0**: [upstream release](https://github.com/apache/iceberg/releases/tag/apache-iceberg-1.12.0).
+- curl initializer **8.22.0**: [latest stable curl release](https://github.com/curl/curl/releases/tag/curl-8_22_0).
+
+Upgrades must preserve all PVCs, PostgreSQL data, Kafka/Connect offsets, and
+RustFS tables. Rolling back upgraded components requires retained state that
+is compatible with the older versions; reverting image tags alone is not a
+safe downgrade. Do not delete PVCs, reset offsets, or recreate the database or
+warehouse to perform an upgrade or rollback.
 
 ## Prerequisites
 
 - Kubernetes cluster (Colima, Minikube, kind, or Docker Desktop)
 - kubectl installed and configured
 - [just](https://github.com/casey/just) (`brew install just`)
-- Minimum 4GB RAM allocated to your cluster
+- Minimum 8GB RAM allocated to your cluster for the stack and image build
 
 ## Quick Start
 
@@ -48,7 +64,7 @@ You can also run the scripts directly from this directory:
 
 ```bash
 # Start with Kubernetes enabled
-colima start --kubernetes --cpu 4 --memory 4
+colima start --kubernetes --cpu 4 --memory 8
 
 # Verify
 kubectl cluster-info
@@ -57,7 +73,7 @@ kubectl cluster-info
 #### Minikube
 
 ```bash
-minikube start --cpus 4 --memory 4096
+minikube start --cpus 4 --memory 8192
 
 # Verify
 kubectl cluster-info
@@ -86,7 +102,7 @@ The script will:
 - Check if Strimzi operator is installed (installs if needed)
 - Create namespace `kafka`
 - Deploy PostgreSQL with CDC configuration
-- Deploy Garage S3 and run setup job
+- Deploy RustFS and run the `rustfs-init` Job to initialize `warehouse`
 - Deploy Kafka cluster in **KRaft mode** (takes ~3 minutes)
 - Deploy Kafka Connect with custom image (built locally)
 - Wait for everything to be ready
@@ -107,19 +123,19 @@ Pods:
   my-cluster-dual-role-0              1/1     Running
   my-connect-cluster-connect-0        1/1     Running
   postgres-0                          1/1     Running
-  garage-0                            1/1     Running
+  rustfs-0                            1/1     Running
 ```
 
 ### 4. Access Services
 
-Port forward to access from localhost:
+Open a separate terminal for each foreground port-forward:
 
 ```bash
 just port-forward
 just port-forward-kafka
 just port-forward-postgres
-just port-forward-garage
-just port-forward-nessie
+just port-forward-rustfs
+just port-forward-rustfs-console
 ```
 
 Then configure `secrets.toml`:
@@ -130,11 +146,94 @@ connect_url = "http://localhost:8083"
 
 [storage]
 type = "s3"
-endpoint_url = "http://localhost:3900"
-access_key = "..."
-secret_key = "..."
+endpoint_url = "http://localhost:9000"
+access_key = "rustfsadmin"
+secret_key = "rustfsadmin"
 bucket = "warehouse"
 ```
+
+The credentials above are **LOCAL DEV ONLY**. RustFS exposes S3 at
+`http://localhost:9000`, its built-in Iceberg REST catalog at
+`http://localhost:9000/iceberg`, and the console at `http://localhost:9001`.
+In namespace `kafka`, use `http://rustfs:9000`, `http://rustfs:9000/iceberg`,
+and `http://rustfs:9001` respectively. There is no separate catalog service.
+
+The connector uses REST warehouse/prefix `warehouse` and S3 bucket `warehouse`.
+Configure REST SigV4 with `iceberg.catalog.rest.sigv4-enabled=true`,
+`iceberg.catalog.rest.signing-name=s3`,
+`iceberg.catalog.rest.signing-region=us-east-1`,
+`iceberg.catalog.rest.access-key-id=rustfsadmin`, and
+`iceberg.catalog.rest.secret-access-key=rustfsadmin`. S3FileIO uses
+`iceberg.catalog.client.region=us-east-1`, endpoint `http://rustfs:9000`,
+the same credentials in `s3.access-key-id` / `s3.secret-access-key`, and
+`s3.path-style-access=true` (all under `iceberg.catalog`).
+
+RustFS is pinned to **1.0.1**. Its
+[S3 Tables / Iceberg REST support](https://docs.rustfs.com/en/administration/data/s3-tables)
+is a preview feature, not a guarantee of full REST compatibility. The single-node
+HTTP deployment and fixed administrator credentials are not production settings.
+
+### Fresh Warehouse Cutover and Rollback
+
+This deployment starts a **fresh warehouse**, not an automatic migration from
+Garage/Nessie. Deployment retains their legacy PVCs; preserve those volumes and
+save the previous connector configurations. To roll back, restore the previous
+git revision, deploy its stack against the retained volumes, and restore its
+connector configurations. Connector offsets are not reset automatically, so
+switching catalog endpoints does not replay already-consumed records. Decide
+explicitly whether replay is needed; deleting the namespace or retained PVCs
+can destroy rollback data.
+
+### Verify the Iceberg Sink Locally
+
+The sample source expects `source_db.public.users`; setup does not seed it.
+On a fresh database, create it and insert records:
+
+```bash
+kubectl exec -n kafka postgres-0 -- psql -U postgres -d source_db -v ON_ERROR_STOP=1 -c \
+  "CREATE TABLE public.users (id bigint PRIMARY KEY, name text NOT NULL, email text NOT NULL);
+   INSERT INTO public.users VALUES
+   (101, 'RustFS smoke alpha', 'rustfs-alpha@example.test'),
+   (102, 'RustFS smoke beta', 'rustfs-beta@example.test');"
+```
+
+Allow a sink commit cycle (configured interval: 60 seconds), then use an
+independent DuckDB client with the `iceberg` and `httpfs` extensions:
+
+```sql
+INSTALL iceberg;
+LOAD iceberg;
+INSTALL httpfs;
+LOAD httpfs;
+CREATE SECRET rustfs_s3 (
+  TYPE s3, KEY_ID 'rustfsadmin', SECRET 'rustfsadmin',
+  REGION 'us-east-1', ENDPOINT '127.0.0.1:9000',
+  URL_STYLE 'path', USE_SSL false
+);
+ATTACH 'warehouse' AS rustfs (
+  TYPE iceberg, ENDPOINT 'http://127.0.0.1:9000/iceberg',
+  AUTHORIZATION_TYPE 'sigv4', SECRET 'rustfs_s3',
+  SIGV4_REGION 'us-east-1', SIGV4_SERVICE 's3',
+  ACCESS_DELEGATION_MODE 'none'
+);
+SELECT "after".id AS id, "after".name AS name, "after".email AS email, op
+FROM rustfs.public.users ORDER BY id;
+```
+
+The two inserted records should appear with `op = 'c'`. This checks PostgreSQL
+CDC, Kafka Connect's Iceberg commit, REST catalog discovery, and S3 file reads,
+not just connector `RUNNING` status. The CDC envelope is retained by design.
+DuckDB is a verification tool, not a dependency of the application or setup.
+
+Local verification used RustFS **1.0.1**, Strimzi **1.2.0**, Kafka/Connect
+**4.3.1**, Debezium **3.7.0.Final**, PostgreSQL **18.6**, Iceberg Connect
+**1.12.0**, and DuckDB **1.5.6**. The upgraded plugin loaded and both connectors
+ran successfully. Three existing CDC rows remained byte-for-byte equivalent
+through the catalog and S3 after the upgrade; a fourth PostgreSQL insert
+committed with its exact ID, name, email, and `op = 'c'`. The replication slot
+remained active, and existing PostgreSQL, Kafka, RustFS, and legacy
+Garage/Nessie PVCs remained bound. Before the upgrade, the existing rows also
+survived a RustFS pod restart and initializer rerun.
 
 ## Manifest Details
 
@@ -142,19 +241,29 @@ bucket = "warehouse"
 Creates dedicated `kafka` namespace for all resources.
 
 ### 01-postgres.yaml
-Deploys PostgreSQL 18.4 Alpine with logical replication enabled.
+Deploys PostgreSQL 18.6 Alpine with logical replication enabled.
 
 ### 02-kafka.yaml
-Deploys single-node Kafka 4.3.0 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
+Deploys single-node Kafka 4.3.1 cluster via Strimzi using **KRaft** and **KafkaNodePool**.
 
 ### 03-kafka-connect.yaml
-Deploys Kafka Connect with Debezium PostgreSQL + Iceberg sink connectors. Uses a custom local image `my-connect-cluster:0.0.3`.
+Deploys Kafka Connect 4.3.1 with Debezium 3.7.0.Final PostgreSQL + Iceberg 1.12.0 sink connectors. Uses a custom local image `my-connect-cluster:0.0.4`.
 
-### 04-garage.yaml
-Deploys Garage S3 v2.3.0 for object storage.
+`Dockerfile.connect` assembles the Iceberg 1.12.0 plugin and runtime dependencies
+from Maven Central in a pinned Maven build stage rather than using the older
+Confluent Hub 1.9.2 package. The upstream [Kafka Connect build](https://github.com/apache/iceberg/blob/apache-iceberg-1.12.0/kafka-connect/build.gradle)
+defines the plugin dependencies; its runtime distribution is not published to
+Maven Central. Building requires Docker BuildKit and network access to Docker
+Hub and Maven Central, but no host Maven or JDK.
 
-### 05-iceberg-catalog.yaml
-Deploys Nessie 0.108.4 catalog.
+### 04-rustfs.yaml
+Deploys RustFS 1.0.1 with persistent storage and the `rustfs` service exposing
+S3 and built-in Iceberg REST on port 9000, and console on port 9001.
+
+### 05-rustfs-init.yaml
+Runs the `rustfs-init` Job to initialize the `warehouse` bucket with the fixed
+local-dev credentials. Check failures with `kubectl -n kafka logs job/rustfs-init`.
+
 ## Troubleshooting
 
 ### Kafka Connect build takes too long
@@ -229,7 +338,8 @@ This removes:
 - Persistent Volume Claims
 - The `kafka` namespace itself
 
-**Note**: Strimzi operator remains installed for faster future deployments.
+**Warning:** Namespace teardown can also delete retained Garage/Nessie PVCs and
+eliminate rollback data. Back up any data you need before running it.
 
 ### Remove Strimzi Operator
 

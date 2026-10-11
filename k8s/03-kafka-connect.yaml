@@ -7,7 +7,7 @@ metadata:
   annotations:
     strimzi.io/use-connector-resources: "true"
 spec:
-  version: 4.3.0
+  version: 4.3.1
   replicas: 1
   bootstrapServers: my-cluster-kafka-bootstrap:9092
   groupId: connect-cluster
@@ -24,7 +24,7 @@ spec:
     value.converter.schemas.enable: false
     # Keep idle Iceberg control polling below the Kafka consumer session timeout.
     offset.flush.interval.ms: 10000
-  image: my-connect-cluster:0.0.3
+  image: my-connect-cluster:0.0.4
   resources:
     requests:
       memory: 1Gi

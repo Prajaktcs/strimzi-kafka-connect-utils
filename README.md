@@ -21,9 +21,9 @@ Whether you're building a data lakehouse with Debezium and Iceberg, streaming ch
 This is the recommended setup for actual use:
 
 - **Kubernetes Cluster**: Your existing cluster running Strimzi
-- **Strimzi Operator**: 1.1.0
-- **Kafka**: 4.3.0 (Managed by Strimzi operator, KRaft)
-- **Kafka Connect**: Deployed via Strimzi KafkaConnect CRD with Debezium 3.6.0
+- **Strimzi Operator**: 1.2.0
+- **Kafka**: 4.3.1 (Managed by Strimzi operator, KRaft)
+- **Kafka Connect**: 4.3.1, deployed via Strimzi KafkaConnect CRD with Debezium 3.7.0.Final
 - **Strimzi Ops**: Rust CLI + web UI that connect remotely via:
   - Kafka Connect REST API (port 8083)
   - Kafka Bootstrap Servers (port 9092)
@@ -61,14 +61,16 @@ This is the recommended setup for actual use:
 
 For testing locally, use the provided Kubernetes manifests:
 
-- **Strimzi Operator**: 1.1.0
-- **Kafka**: 4.3.0 (single-node KRaft cluster)
-- **Database**: PostgreSQL 18.4 with CDC enabled
-- **Kafka Connect**: With Debezium 3.6.0 (PostgreSQL connector)
-- **Object Storage / Catalog**: Garage 2.3.0 + Nessie 0.108.4
+- **Strimzi Operator**: 1.2.0
+- **Kafka**: 4.3.1 (single-node KRaft cluster)
+- **Database**: PostgreSQL 18.6-alpine with CDC enabled
+- **Kafka Connect**: 4.3.1, local image `my-connect-cluster:0.0.4` with Debezium 3.7.0.Final (PostgreSQL connector) and Iceberg 1.12.0
+- **Object Storage / Catalog**: RustFS 1.0.1 with built-in Iceberg REST catalog
 - **App Logic**: Rust (`strimzi-ops` / `strimzi-ui`)
 
 See the "Local Development Environment" section below for details.
+
+See [runtime pin provenance and state-preserving rollback requirements](k8s/README.md#runtime-pin-provenance) for the selected latest-stable stack.
 
 ## Prerequisites
 
@@ -257,13 +259,19 @@ Manage your connectors:
   "iceberg.tables": "public.users",
   "iceberg.tables.auto-create-enabled": true,
   "iceberg.catalog.type": "rest",
-  "iceberg.catalog.uri": "http://nessie:19120/iceberg",
+  "iceberg.catalog.uri": "http://rustfs:9000/iceberg",
   "iceberg.catalog.warehouse": "warehouse",
+  "iceberg.catalog.prefix": "warehouse",
   "iceberg.catalog.io-impl": "org.apache.iceberg.aws.s3.S3FileIO",
-  "iceberg.catalog.client.region": "garage",
-  "iceberg.catalog.s3.endpoint": "http://garage:3900",
-  "iceberg.catalog.s3.access-key-id": "YOUR_ACCESS_KEY",
-  "iceberg.catalog.s3.secret-access-key": "YOUR_SECRET_KEY",
+  "iceberg.catalog.rest.sigv4-enabled": true,
+  "iceberg.catalog.rest.signing-name": "s3",
+  "iceberg.catalog.rest.signing-region": "us-east-1",
+  "iceberg.catalog.rest.access-key-id": "rustfsadmin",
+  "iceberg.catalog.rest.secret-access-key": "rustfsadmin",
+  "iceberg.catalog.client.region": "us-east-1",
+  "iceberg.catalog.s3.endpoint": "http://rustfs:9000",
+  "iceberg.catalog.s3.access-key-id": "rustfsadmin",
+  "iceberg.catalog.s3.secret-access-key": "rustfsadmin",
   "iceberg.catalog.s3.path-style-access": true,
   "key.converter": "org.apache.kafka.connect.json.JsonConverter",
   "value.converter": "org.apache.kafka.connect.json.JsonConverter",
@@ -379,13 +387,13 @@ You can run a complete Kafka Connect stack locally using Kubernetes (Colima, Min
 
 - Kubernetes cluster (Colima, Minikube, kind, or Docker Desktop with Kubernetes)
 - kubectl configured
-- At least 4GB RAM allocated to your cluster
+- At least 8GB RAM allocated to your cluster for the stack and image build
 
 ### Start Colima with Kubernetes (if not running)
 
 ```bash
 # Start Colima with Kubernetes enabled
-colima start --kubernetes --cpu 4 --memory 4
+colima start --kubernetes --cpu 4 --memory 8
 
 # Verify cluster is running
 kubectl cluster-info
@@ -404,9 +412,9 @@ just deploy
 `just setup` will:
 
 1. Start Colima with Kubernetes if no cluster is reachable
-2. Build the local Connect image (`my-connect-cluster:0.0.3`)
-3. Deploy Strimzi, PostgreSQL, Garage S3, Nessie, Kafka, and Kafka Connect
-4. Write `secrets.toml` with Garage credentials from the setup job
+2. Build the local Connect image (`my-connect-cluster:0.0.4`)
+3. Deploy Strimzi, PostgreSQL, RustFS with its built-in catalog, Kafka, and Kafka Connect
+4. Write `secrets.toml` with the fixed local-dev RustFS credentials
 5. Apply the sample Postgres source + Iceberg sink connectors
 6. Start port-forwards in the background (IPv4 / `127.0.0.1`)
 7. Launch the Rust web UI (`strimzi-ui`)
@@ -414,15 +422,35 @@ just deploy
 The first run takes 5–10 minutes.
 
 The local Iceberg sink sends `lakehouse.public.users` to `public.users` using
-Nessie's Iceberg REST endpoint and Garage-backed `S3FileIO`. With auto-creation
+RustFS's built-in Iceberg REST endpoint and `S3FileIO`. With auto-creation
 enabled, the connector creates the namespace and table on the first record.
 Auto-creation does not select table names; `iceberg.tables` supplies them. The
 multi-topic examples use a topic field and per-table routing regexes instead
 of `topic=table` entries.
 
-Nessie stores catalog metadata on its PVC and disables chunked S3 uploads for
-Garage compatibility. Connect's `offset.flush.interval.ms=10000` keeps idle
-Iceberg control consumers polling below their session timeout.
+RustFS is pinned to **1.0.1**. Its [S3 Tables / Iceberg REST support](https://docs.rustfs.com/en/administration/data/s3-tables)
+is a preview feature; this single-node, HTTP deployment is for local development,
+not production or a guarantee of complete Iceberg REST compatibility.
+The `warehouse` bucket is also the REST warehouse/prefix. The `rustfs-init` Job
+initializes storage; no separate catalog service is deployed.
+The fixed `rustfsadmin` / `rustfsadmin` credentials are **LOCAL DEV ONLY**.
+REST requests use SigV4 (`s3`, `us-east-1`), with explicit
+`rest.access-key-id` and `rest.secret-access-key`; S3FileIO uses the same
+credentials, region, and path-style addressing.
+Connect's `offset.flush.interval.ms=10000` keeps idle Iceberg control consumers
+polling below their session timeout.
+
+This is a **fresh warehouse cutover**, not an automatic migration of Garage
+objects or Nessie tables. Deployment retains legacy Garage/Nessie PVCs; do not
+delete them if rollback is needed. To roll back, restore the previous git
+revision, deploy its stack with the retained volumes, and restore the previous
+connector configurations. Connector offsets are not reset automatically:
+switching warehouses does not replay already-consumed records. Back up connector
+configuration and decide on replay explicitly before cutover; namespace teardown
+can destroy the retained volumes.
+Rollback after component upgrades additionally requires state compatible with
+the older versions; preserve all PVCs, database data, offsets, and RustFS tables
+without deletion or reset. See [runtime pin provenance](k8s/README.md#runtime-pin-provenance).
 
 The local worker serializes JSON keys and values with schemas disabled, matching
 the sink's explicit converter settings. Debezium CDC fields such as `after` and
@@ -452,12 +480,17 @@ just port-forward-kafka
 # Terminal 3: PostgreSQL (optional)
 just port-forward-postgres
 
-# Terminal 4: Garage S3 (optional)
-just port-forward-garage
+# Terminal 4: RustFS S3/catalog (optional)
+just port-forward-rustfs
 
-# Terminal 5: Nessie catalog (optional)
-just port-forward-nessie
+# Terminal 5: RustFS console (optional)
+just port-forward-rustfs-console
 ```
+
+RustFS endpoints: S3 `http://localhost:9000`, Iceberg REST
+`http://localhost:9000/iceberg`, console `http://localhost:9001`.
+Inside namespace `kafka`, connectors use `http://rustfs:9000` and
+`http://rustfs:9000/iceberg`; the console is `http://rustfs:9001`.
 
 ### Configure Strimzi Ops
 
@@ -527,15 +560,18 @@ kubectl -n kafka logs -l strimzi.io/name=my-connect-cluster-connect --tail=100
 
 Ensure Kafka is ready before Connect (`my-cluster-kafka-bootstrap` in the `kafka` namespace).
 
-### Garage Access Keys Not Generated
+### RustFS Warehouse Initialization Fails
 
-`just setup` writes Garage credentials into `secrets.toml`. To recreate keys manually:
+Check the initializer and RustFS logs:
 
 ```bash
-kubectl -n kafka exec -it garage-0 -- /garage key create lakehouse-key
-kubectl -n kafka exec -it garage-0 -- /garage bucket create warehouse
-kubectl -n kafka exec -it garage-0 -- /garage bucket allow warehouse --read --write --key lakehouse-key
+kubectl -n kafka logs job/rustfs-init
+kubectl -n kafka logs -l app=rustfs
 ```
+
+Verify the `warehouse` bucket and the local-dev credentials
+`rustfsadmin` / `rustfsadmin`. REST and S3 credentials must both be configured;
+REST signing uses service `s3` and region `us-east-1`.
 
 ### Configuration Validation Errors
 
@@ -548,7 +584,7 @@ Ensure your connector configuration matches the schema validated by `strimzi-ops
 ## References
 
 - [Strimzi Documentation](https://strimzi.io/docs/operators/latest/overview.html)
-- [Garage Documentation](https://garagehq.deuxfleurs.fr)
+- [RustFS S3 Tables / Iceberg REST Documentation](https://docs.rustfs.com/en/administration/data/s3-tables)
 - [Debezium Documentation](https://debezium.io)
 - [Kafka Connect REST API](https://docs.confluent.io/platform/current/connect/references/restapi.html)
 

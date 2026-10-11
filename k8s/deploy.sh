@@ -2,7 +2,7 @@
 set -e
 
 NAMESPACE="kafka"
-STRIMZI_VERSION="1.1.0"
+STRIMZI_VERSION="1.2.0"
 
 echo "Deploying Strimzi Ops local development environment"
 echo "======================================================="
@@ -65,7 +65,7 @@ for rb in strimzi-cluster-operator strimzi-cluster-operator-watched strimzi-clus
 done
 
 echo "Waiting for Strimzi operator to be ready..."
-kubectl wait --for=condition=ready pod -l name=strimzi-cluster-operator -n ${NAMESPACE} --timeout=300s
+kubectl rollout status deployment/strimzi-cluster-operator -n "${NAMESPACE}" --timeout=300s
 echo "Strimzi operator ${STRIMZI_VERSION} is ready"
 echo ""
 
@@ -80,38 +80,38 @@ kubectl apply -f 01-postgres.yaml
 
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL to be ready..."
-kubectl wait --for=condition=ready pod -l app=postgres -n ${NAMESPACE} --timeout=300s
+kubectl rollout status statefulset/postgres -n "${NAMESPACE}" --timeout=300s
 echo "PostgreSQL is ready"
 
-# Deploy Garage S3 (v2.3 single-node auto-bootstrap with fixed local-dev keys)
-echo "  - Garage S3"
-kubectl apply -f 04-garage.yaml
+# RustFS serves both S3 and the built-in Iceberg REST catalog.
+echo "  - RustFS S3 + Iceberg catalog"
+kubectl apply -f 04-rustfs.yaml
+kubectl rollout status statefulset/rustfs -n "${NAMESPACE}" --timeout=300s
 
-# Wait for Garage to be ready
-echo "Waiting for Garage to be ready..."
-kubectl wait --for=condition=ready pod -l app=garage -n ${NAMESPACE} --timeout=300s
-echo "Garage is ready (bucket=warehouse, keys are fixed local-dev values in 04-garage.yaml)"
+# Recreate only the initializer Job; its signed requests retain existing data.
+kubectl delete job rustfs-init -n "${NAMESPACE}" --ignore-not-found=true
+kubectl apply -f 05-rustfs-init.yaml
+if ! kubectl wait --for=condition=complete job/rustfs-init -n "${NAMESPACE}" --timeout=300s; then
+    kubectl logs job/rustfs-init -n "${NAMESPACE}" --all-containers=true
+    exit 1
+fi
+echo "RustFS is ready (table bucket=warehouse)"
 
-# Store the same local-dev credentials in a Kubernetes Secret for in-cluster consumers
-kubectl delete secret garage-s3-credentials -n "${NAMESPACE}" 2>/dev/null || true
-kubectl create secret generic garage-s3-credentials \
-    -n "${NAMESPACE}" \
-    --from-literal=accessKeyId="GKaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-    --from-literal=secretKey="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-echo "S3 credentials stored in Kubernetes secret 'garage-s3-credentials' in namespace '${NAMESPACE}'."
-
-# Deploy Nessie Catalog
-echo "  - Nessie Iceberg Catalog"
-kubectl apply -f 05-iceberg-catalog.yaml
-
-# Wait for Nessie to be ready
-echo "Waiting for Nessie to be ready..."
-kubectl wait --for=condition=ready pod -l app=nessie -n ${NAMESPACE} --timeout=300s
-echo "Nessie is ready"
+# Stop obsolete services only after RustFS is initialized. Retain both legacy
+# PVCs for rollback; existing tables are NOT copied to the new warehouse.
+if kubectl get statefulset garage -n "${NAMESPACE}" >/dev/null 2>&1; then
+    kubectl scale statefulset garage --replicas=0 -n "${NAMESPACE}"
+fi
+if kubectl get deployment nessie -n "${NAMESPACE}" >/dev/null 2>&1; then
+    kubectl scale deployment nessie --replicas=0 -n "${NAMESPACE}"
+fi
+kubectl delete service garage nessie -n "${NAMESPACE}" --ignore-not-found=true
 
 # Deploy Kafka
 echo "  - Kafka cluster"
 kubectl apply -f 02-kafka.yaml
+KAFKA_GENERATION="$(kubectl get kafka/my-cluster -n "${NAMESPACE}" -o jsonpath='{.metadata.generation}')"
+kubectl wait kafka/my-cluster -n "${NAMESPACE}" --for=jsonpath='{.status.observedGeneration}'="${KAFKA_GENERATION}" --timeout=600s
 
 # Wait for Kafka to be ready
 echo "Waiting for Kafka cluster to be ready (this may take a few minutes)..."
@@ -121,6 +121,8 @@ echo "Kafka cluster is ready"
 # Deploy Kafka Connect
 echo "  - Kafka Connect"
 kubectl apply -f 03-kafka-connect.yaml
+CONNECT_GENERATION="$(kubectl get kafkaconnect/my-connect-cluster -n "${NAMESPACE}" -o jsonpath='{.metadata.generation}')"
+kubectl wait kafkaconnect/my-connect-cluster -n "${NAMESPACE}" --for=jsonpath='{.status.observedGeneration}'="${CONNECT_GENERATION}" --timeout=900s
 
 # Wait for Kafka Connect to be ready
 echo "Waiting for Kafka Connect to be ready (this may take a few minutes for first build)..."
@@ -144,14 +146,15 @@ echo ""
 echo "3. PostgreSQL Database:"
 echo "   kubectl port-forward svc/postgres 5432:5432 -n ${NAMESPACE}"
 echo ""
-echo "4. Garage S3 API:"
-echo "   kubectl port-forward svc/garage 3900:3900 -n ${NAMESPACE}"
+echo "4. RustFS S3 and Iceberg REST API:"
+echo "   kubectl port-forward svc/rustfs 9000:9000 -n ${NAMESPACE}"
+echo "   Catalog: http://127.0.0.1:9000/iceberg"
 echo ""
-echo "5. Nessie Catalog API:"
-echo "   kubectl port-forward svc/nessie 19120:19120 -n ${NAMESPACE}"
+echo "5. RustFS Console:"
+echo "   kubectl port-forward svc/rustfs 9001:9001 -n ${NAMESPACE}"
 echo ""
 echo "Then run: just sync-secrets  (or use just setup which does this automatically)"
-echo "In-cluster S3 credentials are in secret/garage-s3-credentials."
+echo "In-cluster S3 credentials are in secret/rustfs-s3-credentials (local-dev only)."
 echo ""
 echo "Monitor deployment status:"
 echo "kubectl get pods -n ${NAMESPACE}"

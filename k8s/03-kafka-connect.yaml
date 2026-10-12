@@ -27,7 +27,7 @@ data:
           connector: "$1"
           task: "$2"
           status: "$3"
-      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=(source-task|sink-task|connector-task|task-error)-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))[^>]*><>([a-z-]+-total)'
+      - pattern: 'kafka\.connect<(?=(?:[^>]*, )?type=(source-task|sink-task|connector-task|task-error)-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))[^>]*><>([a-z-]+-total|total-(?:record-errors|record-failures|records-skipped|retries|errors-logged)|deadletterqueue-produce-(?:requests|failures))'
         name: kafka_connect_$1_$4
         type: COUNTER
         labels:

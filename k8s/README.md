@@ -374,6 +374,8 @@ round before the next. Browser refreshes read the cached snapshot, not exporters
 Samples keep the complete identity `(worker, metric name, all labels)`, including
 Connect `connector`/`task` and Debezium `server`/`context`; workers/tasks are never
 silently combined. Missing or non-finite values are unavailable, not zero.
+Kafka task-error `total-*` and `deadletterqueue-produce-*` cumulative metrics are
+exported as counters; `last-error-timestamp` remains a gauge.
 Raw UI tables render at most **25 rows per worker and 200 rows total**, with
 explicit truncation notices. Collection/cache data remains complete; these are
 display limits, not scrape/sample limits.

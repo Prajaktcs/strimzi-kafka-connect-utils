@@ -3,8 +3,8 @@ use askama_web::WebTemplate;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use strimzi_ops_core::metrics::{
-    ConnectorThroughput, DebeziumStreaming, FailureCounter, MetricLookup, MetricSample,
-    MetricState, ThroughputStage, ThroughputValue,
+    ConnectBackpressure, ConnectorThroughput, DebeziumQueue, DebeziumStreaming, FailureCounter,
+    MetricLookup, MetricSample, MetricState, ThroughputStage, ThroughputValue,
 };
 
 use crate::error::Error;
@@ -307,6 +307,102 @@ pub fn streaming_views(
     (views, omitted)
 }
 
+pub struct QueueBackpressureView {
+    pub connector: String,
+    pub task: String,
+    pub worker: String,
+    pub domain: String,
+    pub server: String,
+    pub context: String,
+    pub total_capacity: String,
+    pub remaining_capacity: String,
+    pub utilization: String,
+    pub max_queue_bytes: String,
+    pub current_queue_bytes: String,
+    pub bytes_utilization: String,
+}
+
+impl QueueBackpressureView {
+    fn new(queue: DebeziumQueue, expired: bool) -> Self {
+        Self {
+            connector: queue.connector,
+            task: queue.task,
+            worker: queue.worker,
+            domain: queue.domain,
+            server: queue.server,
+            context: queue.context,
+            total_capacity: format_queue_measure(queue.total_capacity, expired, 0),
+            remaining_capacity: format_queue_measure(queue.remaining_capacity, expired, 0),
+            utilization: format_queue_measure(queue.utilization, expired, 2),
+            max_queue_bytes: format_queue_measure(queue.max_queue_bytes, expired, 0),
+            current_queue_bytes: format_queue_measure(queue.current_queue_bytes, expired, 0),
+            bytes_utilization: format_queue_measure(queue.bytes_utilization, expired, 2),
+        }
+    }
+}
+
+pub struct ConnectBackpressureView {
+    pub connector: String,
+    pub task: String,
+    pub worker: String,
+    pub kind: &'static str,
+    pub active_records: String,
+    pub active_records_max: String,
+    pub active_records_avg: String,
+    pub consumer_lag_max: String,
+}
+
+impl ConnectBackpressureView {
+    fn new(active: ConnectBackpressure, expired: bool) -> Self {
+        Self {
+            connector: active.connector,
+            task: active.task,
+            worker: active.worker,
+            kind: active.kind.label(),
+            active_records: format_queue_measure(active.active_records, expired, 0),
+            active_records_max: format_queue_measure(active.active_records_max, expired, 0),
+            active_records_avg: format_queue_measure(active.active_records_avg, expired, 2),
+            consumer_lag_max: format_queue_measure(active.consumer_lag_max, expired, 0),
+        }
+    }
+}
+
+/// Expire and format one backpressure measurement like the streaming panel.
+fn format_queue_measure(measurement: MetricLookup, expired: bool, precision: usize) -> String {
+    format_streaming_measurement(expire_lookup(measurement, expired), false, precision)
+}
+
+/// Bound Debezium queue rows only after projecting the complete snapshot.
+pub fn queue_views(
+    queues: Vec<DebeziumQueue>,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<QueueBackpressureView>, usize) {
+    let omitted = queues.len().saturating_sub(row_limit);
+    let views = queues
+        .into_iter()
+        .take(row_limit)
+        .map(|row| QueueBackpressureView::new(row, expired))
+        .collect();
+    (views, omitted)
+}
+
+/// Bound Connect active-record rows only after projecting the complete
+/// snapshot.
+pub fn active_views(
+    actives: Vec<ConnectBackpressure>,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<ConnectBackpressureView>, usize) {
+    let omitted = actives.len().saturating_sub(row_limit);
+    let views = actives
+        .into_iter()
+        .take(row_limit)
+        .map(|row| ConnectBackpressureView::new(row, expired))
+        .collect();
+    (views, omitted)
+}
+
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub struct MetricsPanel<'a> {
@@ -316,6 +412,10 @@ pub struct MetricsPanel<'a> {
     pub throughput_omitted: usize,
     pub streaming: Vec<DebeziumStreamingView>,
     pub streaming_omitted: usize,
+    pub queues: Vec<QueueBackpressureView>,
+    pub queues_omitted: usize,
+    pub actives: Vec<ConnectBackpressureView>,
+    pub actives_omitted: usize,
 }
 
 #[derive(Debug, Clone)]

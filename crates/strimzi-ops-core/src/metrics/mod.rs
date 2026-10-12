@@ -6,6 +6,7 @@
 //! unauthenticated loopback endpoints; certificate and hostname checks stay enabled.
 //! Collection and client destruction must run on a blocking worker thread.
 
+mod backpressure;
 mod collector;
 mod failures;
 mod parser;
@@ -14,6 +15,9 @@ mod targets;
 mod throughput;
 mod types;
 
+pub use backpressure::{
+    connect_backpressure, debezium_queues, ConnectBackpressure, DebeziumQueue, TaskKind,
+};
 pub use collector::{MetricsCollector, COLLECTION_INTERVAL, REQUEST_TIMEOUT, STALE_AFTER};
 pub use failures::{FailureCounter, FailuresReport, TaskFailures};
 pub use parser::parse_prometheus;

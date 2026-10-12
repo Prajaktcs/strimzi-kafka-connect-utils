@@ -338,3 +338,106 @@ async fn distinguish_unconfigured_dashboard_metrics_from_unavailable_readings() 
     plugins.assert_hits(2);
     inventory.assert_hits(2);
 }
+
+#[tokio::test]
+async fn monitor_metrics_panel_projects_queues_and_active_records() {
+    let server = TlsMockServer::start();
+    let scrape_body = [
+        r#"debezium_postgres_queue_total_capacity{connector="pg",task="0",server="lakehouse",context="streaming"} 2048"#,
+        r#"debezium_postgres_queue_remaining_capacity{connector="pg",task="0",server="lakehouse",context="streaming"} 1024"#,
+        r#"debezium_postgres_queue_max_queue_size_in_bytes{connector="pg",task="0",server="lakehouse",context="streaming"} 25000000"#,
+        r#"debezium_postgres_queue_current_queue_size_in_bytes{connector="pg",task="0",server="lakehouse",context="streaming"} 6250000"#,
+        r#"kafka_connect_source_task_source_record_active_count{connector="source",task="0"} 3"#,
+        r#"kafka_connect_source_task_source_record_active_count_max{connector="source",task="0"} 9"#,
+        r#"kafka_connect_source_task_source_record_active_count_avg{connector="source",task="0"} 2.5"#,
+        r#"kafka_connect_sink_task_sink_record_active_count{connector="sink",task="0"} 12"#,
+        r#"kafka_connect_sink_task_sink_record_lag_max{connector="sink",task="0"} 3400"#,
+    ]
+    .join("\n");
+    let scrape = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/metrics");
+        then.status(200).body(scrape_body);
+    });
+    let path = std::env::temp_dir().join(format!(
+        "strimzi-backpressure-{}.toml",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(
+        &path,
+        format!(
+            "[[workers]]\nid = \"worker-0\"\nurl = \"{}\"\nbearer_token = \"server-only-token\"\nca_file = '{}'\n",
+            server.url("/metrics"),
+            server.ca_path().display()
+        ),
+    )
+    .unwrap();
+    let state = AppState::new(ConnectionSettings {
+        metrics_targets_file: Some(path.clone()),
+        ..ConnectionSettings::default()
+    });
+    let task = state.start_metrics().unwrap();
+    let app = router(state);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while scrape.hits() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("collector must scrape the metrics endpoint");
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/monitor/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let html = std::str::from_utf8(&body).unwrap();
+    // Derivation is per task; zero/invalid capacities stay unavailable.
+    assert!(html.contains("Queues and backpressure"));
+    assert!(
+        html.contains(">0.50 (available)<"),
+        "record utilization should read 0.50: {html}"
+    );
+    assert!(
+        html.contains(">0.25 (available)<"),
+        "byte utilization should read 0.25: {html}"
+    );
+    assert!(html.contains(">pg</td>"), "queue row identity: {html}");
+    assert!(
+        html.contains(">2048 (available)<"),
+        "total capacity: {html}"
+    );
+    assert!(
+        html.contains(">6250000 (available)<"),
+        "current bytes: {html}"
+    );
+    // Active records are labeled pipeline depth, lag stays labeled as lag.
+    assert!(html.contains("Active records are not Kafka consumer lag"));
+    assert!(html.contains(">sink</td>"), "kind row: {html}");
+    assert!(
+        html.contains(">3 (available)<"),
+        "source active records: {html}"
+    );
+    assert!(
+        html.contains(">9 (available)<"),
+        "source active max: {html}"
+    );
+    assert!(
+        html.contains(">12 (available)<"),
+        "sink active records: {html}"
+    );
+    assert!(
+        html.contains(">3400 (available)<"),
+        "sink consumer lag: {html}"
+    );
+    assert!(!html.contains("server-only-token"));
+    assert_eq!(scrape.hits(), 1, "the panel must not trigger new scrapes");
+    task.abort();
+    std::fs::remove_file(path).unwrap();
+}

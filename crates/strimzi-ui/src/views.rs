@@ -2,7 +2,9 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use strimzi_ops_core::metrics::{MetricSample, MetricState};
+use strimzi_ops_core::metrics::{
+    ConnectorThroughput, MetricSample, MetricState, ThroughputStage, ThroughputValue,
+};
 
 use crate::error::Error;
 
@@ -91,11 +93,135 @@ pub struct MetricsWorkerView<'a> {
     pub omitted: usize,
 }
 
+pub struct ThroughputStageView {
+    pub label: &'static str,
+    pub rate: String,
+    pub total: String,
+}
+
+impl ThroughputStageView {
+    fn new(mut stage: ThroughputStage, expired: bool) -> Self {
+        if expired {
+            stage.rate.expire();
+            stage.total.expire();
+        }
+        Self {
+            label: stage.label,
+            rate: format_measurement(stage.rate, 2),
+            total: format_measurement(stage.total, 0),
+        }
+    }
+}
+
+fn format_measurement(measurement: ThroughputValue, precision: usize) -> String {
+    measurement.value.map_or_else(
+        || measurement.state.to_string(),
+        |value| {
+            // Never round a small but positive rate into apparent inactivity.
+            if precision == 2 && value > 0.0 && value < 0.01 {
+                format!("{value:.2e} ({})", measurement.state)
+            } else {
+                format!("{value:.precision$} ({})", measurement.state)
+            }
+        },
+    )
+}
+
+pub struct ThroughputTaskView {
+    pub task: String,
+    pub worker: String,
+    pub stages: Vec<ThroughputStageView>,
+}
+
+pub struct ThroughputConnectorView {
+    pub connector: String,
+    pub stages: Vec<ThroughputStageView>,
+    pub tasks: Vec<ThroughputTaskView>,
+}
+
+impl ThroughputConnectorView {
+    fn new(connector: ConnectorThroughput, expired: bool, remaining: &mut usize) -> Self {
+        let stages = bounded_stages(connector.stages, expired, true, remaining);
+        let tasks = connector
+            .tasks
+            .into_iter()
+            .take(*remaining)
+            .filter_map(|task| {
+                let stages = bounded_stages(task.stages, expired, false, remaining);
+                (!stages.is_empty()).then_some(ThroughputTaskView {
+                    task: task.task,
+                    worker: task.worker,
+                    stages,
+                })
+            })
+            .collect();
+        Self {
+            connector: connector.connector,
+            stages,
+            tasks,
+        }
+    }
+}
+
+fn bounded_stages(
+    stages: Vec<ThroughputStage>,
+    expired: bool,
+    aggregate: bool,
+    remaining: &mut usize,
+) -> Vec<ThroughputStageView> {
+    let stages: Vec<_> = stages
+        .into_iter()
+        .take(*remaining)
+        .map(|mut stage| {
+            if expired && aggregate {
+                stage.rate.expire();
+                stage.total.expire();
+                stage.rate.value = None;
+                stage.total.value = None;
+            }
+            ThroughputStageView::new(stage, expired)
+        })
+        .collect();
+    *remaining -= stages.len();
+    stages
+}
+
+/// Bound formatted connector/task rows, never the underlying aggregation.
+pub fn throughput_views(
+    connectors: Vec<ConnectorThroughput>,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<ThroughputConnectorView>, usize) {
+    let mut remaining = row_limit;
+    let mut omitted = 0;
+    let mut views = Vec::new();
+    for connector in connectors {
+        let rows = connector.stages.len()
+            + connector
+                .tasks
+                .iter()
+                .map(|task| task.stages.len())
+                .sum::<usize>();
+        let before = remaining;
+        if remaining > 0 {
+            views.push(ThroughputConnectorView::new(
+                connector,
+                expired,
+                &mut remaining,
+            ));
+        }
+        omitted += rows - (before - remaining);
+    }
+    (views, omitted)
+}
+
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub struct MetricsPanel<'a> {
     pub state: MetricState,
     pub workers: Vec<MetricsWorkerView<'a>>,
+    pub throughput: Vec<ThroughputConnectorView>,
+    pub throughput_omitted: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -195,3 +321,7 @@ pub struct EditPage {
     pub validation_error: Option<String>,
     pub flash: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "views_tests.rs"]
+mod tests;

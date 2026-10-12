@@ -3,8 +3,8 @@
 {% block content %}
 <h2>Monitor</h2>
 <section aria-labelledby="metrics-heading">
-  <h3 id="metrics-heading">Connect and Debezium metrics</h3>
-  <p class="lede">Collected server-side from every configured worker. Values retain their worker, connector, task and context labels; missing data is never zero.</p>
+  <h3 id="metrics-heading">Live connector throughput</h3>
+  <p class="lede">Source records written to Kafka and sink records read/sent, by connector and task. Collected server-side from every configured worker without consuming message payloads; missing data is never zero.</p>
   <div hx-get="/monitor/metrics" hx-trigger="load, every 10s" hx-swap="innerHTML">
     <p class="notice">Loading metrics availability…</p>
   </div>

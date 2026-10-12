@@ -560,6 +560,105 @@ from **1 to 11**, sink read/sent from **0 to 10**, with positive native rates in
 both connector and task tables. The browser retained the same document and
 observed HTMX swaps, proving updates without full-page navigation.
 
+### Debezium Streaming Health and Source Delay
+
+Monitor adds a Debezium panel only for explicitly tagged exporter identities.
+Common Connect throughput remains available for other plugins. Each row preserves
+`connector`, `task`, worker, Debezium domain and logical `server`; no values are
+summed across these identities. Only **`context="streaming"`** supplies values.
+Snapshot/queue attributes can establish identity when streaming metrics are
+missing, but snapshot counters never contribute to this panel. Snapshot
+notification monitoring remains independent and unchanged.
+
+The installed local **Debezium 3.7.0.Final PostgreSQL** connector and JMX Exporter
+1.6.0 were checked against the running HTTPS endpoint, including its native
+attribute names in `HELP` and exported labels. The streaming MBean is
+`debezium.postgres:type=connector-metrics,context=streaming,server=lakehouse`
+with custom tags `connector=postgres-source-connector,task=0`; ObjectName property
+order is not significant. All readings below retain those four labels.
+
+| UI measurement | Native MBean attribute | Actual PostgreSQL exported metric | Unit / meaning |
+| --- | --- | --- | --- |
+| Database connection | `Connected` | `debezium_postgres_connected` | Boolean: 1 connected, 0 disconnected from the source database; not proof of downstream delivery or catch-up. |
+| Source delay | `MilliSecondsBehindSource` | `debezium_postgres_milli_seconds_behind_source` | Milliseconds from the last timestamped source change to Debezium processing it. |
+| Streaming events | `TotalNumberOfEventsSeen` | `debezium_postgres_total_number_of_events_seen_total` | Cumulative source data-change events seen during streaming since start/reset. |
+| Creates | `TotalNumberOfCreateEventsSeen` | `debezium_postgres_total_number_of_create_events_seen_total` | Cumulative create events since start/reset. |
+| Updates | `TotalNumberOfUpdateEventsSeen` | `debezium_postgres_total_number_of_update_events_seen_total` | Cumulative update events since start/reset. |
+| Deletes | `TotalNumberOfDeleteEventsSeen` | `debezium_postgres_total_number_of_delete_events_seen_total` | Cumulative delete events since start/reset. |
+
+Other Debezium domains use the same supported attribute suffixes **only when
+actually exported**; this is not a claim that every database connector/version
+exposes every metric. Untagged beans are not matched to Connect names by guessing
+from `server` or `topic.prefix`. With no identifiable Debezium samples the panel
+is absent, and common panels/collection diagnostics remain visible.
+
+**Source delay is not Kafka consumer-group lag.** It compares the database event
+timestamp with the Connect JVM processing clock, not Kafka offsets, unconsumed
+records, WAL backlog size or sink commit latency. Clock skew, timestamp precision
+and clock adjustments affect the result. Synchronize database and worker clocks
+before interpreting it. The last delay can remain unchanged while idle: even a
+fresh scrape does not make that historical event delay a wall-clock backlog
+estimate. It also does not establish end-to-end delivery to Kafka or a sink.
+The tagged [3.7.0.Final `StreamingMeter` implementation](https://github.com/debezium/debezium/blob/v3.7.0.Final/debezium-connector-common/src/main/java/io/debezium/pipeline/meters/StreamingMeter.java)
+returns **-1 before a timestamped measurement is available**; this was observed
+on the live local connector before the smoke inserts.
+
+Availability is independent for each field:
+
+- A missing, nonfinite or negative reading is **unavailable**, never a fabricated
+  zero. Negative delay, including the -1 sentinel or negative clock skew, is not
+  clamped into apparent health. `Connected` must be exactly 0 or 1.
+- Duplicate worker ownership/measurement series and unsupported extra dimensions
+  are unavailable rather than selecting an arbitrary healthy reading.
+- Failed collection retains good samples as **stale**; a shared cache older than
+  30 seconds also expires available readings. The connection explicitly says
+  **last observed: connected/disconnected (stale)**, not current health. Historical
+  delay/counters are marked last observed/stale; worker sample age is shown below.
+  Collection failure without a previous reading remains a collection error.
+- Genuine reported zeros remain available. Counters can fall after task restart,
+  reassignment or metrics reset; they are not durable Kafka output totals.
+
+Streaming tables have an independent **200 identity-row display limit**, with an
+exact omitted-row notice. Projection uses the complete cached snapshot before
+truncation; raw/throughput display limits cannot hide supported streaming fields.
+
+#### Real CDC Smoke Check
+
+1. Start private per-worker forwards and the UI as described above. Confirm the
+   PostgreSQL task is running, open `/monitor`, and record the streaming row.
+2. Use a uniquely tagged insert into `source_db.public.users`, following the
+   collision-safe insert and ID/tag tracking in the throughput smoke procedure.
+   Verify streaming events/creates increase in the **same open browser page**
+   after server collection and HTMX refresh (each normally about 10 seconds).
+3. Update only those tagged rows, then delete only those rows with matching IDs
+   and tag/email. Verify updates and deletes increase independently. Cleanup
+   produces CDC traffic; it does not remove Kafka history or append-only sink data.
+4. Confirm the snapshot-context counters are separate and the snapshot notification
+   form remains usable. To check staleness without stopping the live connector,
+   use a separate UI instance with its own targets file; make that file's HTTPS
+   worker URL unreachable, observe last-observed/stale values, then restore it and
+   verify recovery. Do not modify another UI's targets or stop shared forwards.
+
+Issue #19 live smoke: three inserts changed streaming events/creates from 0 to 3
+and delay from -1 to 509 ms. Three updates changed events to 6 and updates to 3;
+the same browser document refreshed via HTMX and showed connected with 155 ms
+delay. Snapshot-context event counters remained zero, while both PostgreSQL and
+Iceberg common throughput panels remained present.
+Deleting only those three smoke rows changed events to 9 and deletes to 3, with
+354 ms delay. The isolated unreachable-target check showed **last observed:
+connected (stale)** and historical counters; restoring the target recovered in
+the same document. A throwaway live-snapshot rendering check also verified missing
+connection/delay fields, cache expiry and exact row-cap omission.
+Permanent view regressions additionally cover fresh/disconnected readings,
+worker staleness, cache expiry, unavailable/error fields, and streaming row-limit
+boundaries (including zero and the 200-row display cap).
+
+The snapshot notification form was retained. A live notification session on this
+host reached the existing error surface because Kafka advertises internal broker
+DNS names that the host cannot resolve through the localhost bootstrap forward.
+Snapshot tracker/session regression tests passed; successful live notification
+consumption was not established by this smoke check.
+
 
 Primary configuration references:
 - [Strimzi 1.2.0 Kafka Connect exporter example](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/examples/metrics/kafka-connect-metrics.yaml).

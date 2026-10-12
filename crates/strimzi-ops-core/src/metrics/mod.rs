@@ -9,6 +9,7 @@
 mod collector;
 mod failures;
 mod parser;
+mod streaming;
 mod targets;
 mod throughput;
 mod types;
@@ -16,6 +17,7 @@ mod types;
 pub use collector::{MetricsCollector, COLLECTION_INTERVAL, REQUEST_TIMEOUT, STALE_AFTER};
 pub use failures::{FailureCounter, FailuresReport, TaskFailures};
 pub use parser::parse_prometheus;
+pub use streaming::{debezium_streaming, DebeziumStreaming};
 pub use throughput::{
     connector_throughput, ConnectorThroughput, TaskThroughput, ThroughputStage, ThroughputState,
     ThroughputValue,

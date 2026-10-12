@@ -202,6 +202,18 @@ The local single-task PostgreSQL source uses Debezium's
 explicit identity; it is not inferred from `topic.prefix`. See
 [exporter configuration, authenticated remote file example, limits and network-policy notes](k8s/README.md#per-worker-connect-and-debezium-metrics).
 
+Monitor also shows applicable **Debezium streaming health**: source database
+connection, last-event source delay in milliseconds, and cumulative streaming
+event/create/update/delete counts, with connector/task/worker/domain/server
+identity preserved. Snapshot-context measurements are excluded; other plugins
+keep the common Connect panels. Missing/invalid readings are unavailable, and
+stale connection values are explicitly **last observed**, never current health.
+Source delay is **not Kafka consumer-group lag** or downstream delivery latency;
+database/worker clock skew affects it, and idle periods retain the last event's
+delay rather than a wall-clock backlog estimate. The local PostgreSQL 3.7.0.Final
+metric names and real CDC behavior were verified against the running exporter.
+See [streaming metric definitions, availability and live smoke procedure](k8s/README.md#debezium-streaming-health-and-source-delay).
+
 ## Usage
 
 ### Linter (CLI)

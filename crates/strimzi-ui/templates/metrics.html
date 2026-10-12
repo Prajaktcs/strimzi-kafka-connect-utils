@@ -49,6 +49,30 @@
     </div>
 </section>
 {% endfor %}
+{% if !streaming.is_empty() %}
+<section aria-label="Debezium streaming">
+  <h4>Debezium streaming</h4>
+  <p>Database connection and streaming measurements are shown per connector, task, worker, Debezium domain and server, without summing counters. Support varies by connector and version; unavailable or collection error readings are never zero. Stale readings are explicitly last observed, not current connection health.</p>
+  <p>Source delay is the last event's timestamp-to-processing delay in milliseconds, <strong>not Kafka consumer-group lag or downstream delivery</strong>. Clock skew affects it; negative delay is unavailable. During idle periods, the retained delay is not a wall-clock backlog estimate.</p>
+  <p>Streaming events and create/update/delete totals are cumulative task/session counters since restart or reset, <strong>not durable Kafka output</strong>. Snapshot-context counters are excluded.</p>
+  {% if streaming_omitted > 0 %}
+  <p class="notice">{{ streaming_omitted }} additional Debezium streaming identity rows are not displayed. Streaming display is independently limited to 200 rows per response; the backend cache remains complete.</p>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <caption>Debezium streaming measurements ({{ streaming.len() }} identity rows)</caption>
+      <thead><tr><th>Connector</th><th>Task</th><th>Worker</th><th>Domain</th><th>Server</th><th>Database connection</th><th>Source delay (ms)</th><th>Streaming events (cumulative)</th><th>Creates (cumulative)</th><th>Updates (cumulative)</th><th>Deletes (cumulative)</th></tr></thead>
+      <tbody>
+      {% for row in streaming %}
+        <tr>
+          <td>{{ row.connector }}</td><td>{{ row.task }}</td><td>{{ row.worker }}</td><td>{{ row.domain }}</td><td>{{ row.server }}</td><td>{{ row.connected }}</td><td>{{ row.delay_ms }}</td><td>{{ row.events_total }}</td><td>{{ row.creates_total }}</td><td>{{ row.updates_total }}</td><td>{{ row.deletes_total }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 {% for worker in workers %}
 <section>
   <h4>{{ worker.worker }} — {{ worker.state }}</h4>

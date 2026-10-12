@@ -7,7 +7,9 @@ use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use strimzi_ops_core::metrics::{connector_throughput, MetricState, STALE_AFTER};
+use strimzi_ops_core::metrics::{
+    connector_throughput, debezium_streaming, MetricState, STALE_AFTER,
+};
 use strimzi_ops_core::{NotificationMonitor, SnapshotTracker};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
@@ -17,8 +19,8 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    render, throughput_views, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage,
-    MonitorPage, MonitorResultsPage, SnapshotCard, SnapshotCards,
+    render, streaming_views, throughput_views, HtmlResult, MetricsPanel, MetricsWorkerView,
+    MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCard, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -38,6 +40,7 @@ pub async fn monitor(State(state): State<AppState>) -> HtmlResult {
 
 const MAX_DISPLAYED_PER_WORKER: usize = 25;
 const MAX_DISPLAYED_TOTAL: usize = 200;
+const MAX_DISPLAYED_STREAMING_ROWS: usize = 200;
 
 /// Browsers only read the application cache; this handler never scrapes workers.
 pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
@@ -49,6 +52,11 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
     } else {
         cached.snapshot.state
     };
+    let (streaming, streaming_omitted) = streaming_views(
+        debezium_streaming(&cached.snapshot),
+        expired,
+        MAX_DISPLAYED_STREAMING_ROWS,
+    );
     let mut remaining = MAX_DISPLAYED_TOTAL;
     let workers = cached
         .snapshot
@@ -93,6 +101,8 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         workers,
         throughput,
         throughput_omitted,
+        streaming,
+        streaming_omitted,
     })
 }
 

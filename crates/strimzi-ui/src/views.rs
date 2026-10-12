@@ -3,8 +3,8 @@ use askama_web::WebTemplate;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use strimzi_ops_core::metrics::{
-    ConnectorThroughput, FailureCounter, MetricSample, MetricState, ThroughputStage,
-    ThroughputValue,
+    ConnectorThroughput, DebeziumStreaming, FailureCounter, MetricLookup, MetricSample,
+    MetricState, ThroughputStage, ThroughputValue,
 };
 
 use crate::error::Error;
@@ -216,6 +216,97 @@ pub fn throughput_views(
     (views, omitted)
 }
 
+pub struct DebeziumStreamingView {
+    pub connector: String,
+    pub task: String,
+    pub worker: String,
+    pub domain: String,
+    pub server: String,
+    pub connected: String,
+    pub delay_ms: String,
+    pub events_total: String,
+    pub creates_total: String,
+    pub updates_total: String,
+    pub deletes_total: String,
+}
+
+impl DebeziumStreamingView {
+    fn new(streaming: DebeziumStreaming, expired: bool) -> Self {
+        Self {
+            connector: streaming.connector,
+            task: streaming.task,
+            worker: streaming.worker,
+            domain: streaming.domain,
+            server: streaming.server,
+            connected: format_connection(streaming.connected, expired),
+            delay_ms: format_streaming_measurement(streaming.delay_ms, expired, 2),
+            events_total: format_streaming_measurement(streaming.events_total, expired, 0),
+            creates_total: format_streaming_measurement(streaming.creates_total, expired, 0),
+            updates_total: format_streaming_measurement(streaming.updates_total, expired, 0),
+            deletes_total: format_streaming_measurement(streaming.deletes_total, expired, 0),
+        }
+    }
+}
+
+fn expire_lookup(mut measurement: MetricLookup, expired: bool) -> MetricLookup {
+    if expired && measurement.state == MetricState::Available {
+        measurement.state = MetricState::Stale;
+    }
+    measurement
+}
+
+fn format_connection(measurement: MetricLookup, expired: bool) -> String {
+    let measurement = expire_lookup(measurement, expired);
+    let observed = match measurement.value {
+        Some(1.0) => "connected",
+        Some(0.0) => "disconnected",
+        _ => return measurement.state.to_string(),
+    };
+    match measurement.state {
+        MetricState::Available => observed.to_owned(),
+        MetricState::Stale => format!("last observed: {observed} (stale)"),
+        state => state.to_string(),
+    }
+}
+
+fn format_streaming_measurement(
+    measurement: MetricLookup,
+    expired: bool,
+    precision: usize,
+) -> String {
+    let measurement = expire_lookup(measurement, expired);
+    match (measurement.state, measurement.value) {
+        (state @ (MetricState::Available | MetricState::Stale), Some(value)) => {
+            let status = if state == MetricState::Stale {
+                "last observed; stale"
+            } else {
+                "available"
+            };
+            if precision == 2 && value > 0.0 && value < 0.01 {
+                format!("{value:.2e} ({status})")
+            } else {
+                format!("{value:.precision$} ({status})")
+            }
+        }
+        (state, _) => state.to_string(),
+    }
+}
+
+/// Bound identity rows only after projecting the complete worker snapshot.
+pub fn streaming_views(
+    streaming: Vec<DebeziumStreaming>,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<DebeziumStreamingView>, usize) {
+    let omitted = streaming.len().saturating_sub(row_limit);
+    let views = streaming
+        .into_iter()
+        .take(row_limit)
+        .map(|row| DebeziumStreamingView::new(row, expired))
+        .collect();
+    (views, omitted)
+}
+
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub struct MetricsPanel<'a> {
@@ -223,6 +314,8 @@ pub struct MetricsPanel<'a> {
     pub workers: Vec<MetricsWorkerView<'a>>,
     pub throughput: Vec<ThroughputConnectorView>,
     pub throughput_omitted: usize,
+    pub streaming: Vec<DebeziumStreamingView>,
+    pub streaming_omitted: usize,
 }
 
 #[derive(Debug, Clone)]

@@ -175,6 +175,6 @@ fn counts_omitted_streaming_identities_at_row_limit_boundaries() {
         }
     }
     let (views, omitted) = streaming_views(Vec::new(), false, 200);
-    assert!(views.is_empty());
+    assert_eq!(views.len(), 0);
     assert_eq!(omitted, 0);
 }

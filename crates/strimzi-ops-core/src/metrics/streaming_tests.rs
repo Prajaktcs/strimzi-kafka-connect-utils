@@ -100,7 +100,10 @@ debezium_postgres_connected{connector="source",task="0",server="lakehouse",conte
 debezium_postgres_connected{connector="source",task="0",server="lakehouse"} 1
 debezium_postgres_arbitrary_attribute{connector="source",task="0",server="lakehouse",context="streaming"} 1
 debezium__connected{connector="source",task="0",server="lakehouse",context="streaming"} 1"#;
-    assert!(project(vec![worker("worker-a", MetricState::Available, text)]).is_empty());
+    assert_eq!(
+        project(vec![worker("worker-a", MetricState::Available, text)]),
+        Vec::new()
+    );
 }
 
 #[test]
@@ -231,11 +234,13 @@ fn collection_error_never_exposes_retained_measurements() {
             assert_reading(reading, MetricState::CollectionError, None);
         }
     }
-    assert!(debezium_streaming(&MetricsSnapshot {
-        workers: vec![],
-        state: MetricState::CollectionError,
-    })
-    .is_empty());
+    assert_eq!(
+        debezium_streaming(&MetricsSnapshot {
+            workers: vec![],
+            state: MetricState::CollectionError,
+        }),
+        Vec::new()
+    );
 }
 
 #[test]

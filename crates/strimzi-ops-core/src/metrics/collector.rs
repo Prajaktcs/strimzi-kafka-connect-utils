@@ -228,6 +228,7 @@ fn metrics_client(target: &Target) -> Result<Client, &'static str> {
         .as_deref()
         .map_or_else(|| Ok(Vec::new()), read_roots)?;
     let mut builder = Client::builder()
+        .tls_built_in_root_certs(target.ca_file.is_none())
         .timeout(REQUEST_TIMEOUT)
         .connect_timeout(REQUEST_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none());

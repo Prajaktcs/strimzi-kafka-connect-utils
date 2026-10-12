@@ -678,10 +678,10 @@ below. Utilization is derived here, never exported:
 | Queue total capacity | Debezium `QueueTotalCapacity` (snapshot and streaming contexts) | `debezium_<domain>_queue_total_capacity` | Records the connector queue is designed to hold; record unit. |
 | Remaining capacity | Debezium `QueueRemainingCapacity` | `debezium_<domain>_queue_remaining_capacity` | Free records; the queue is shared between snapshot/streaming threads and the Connect poll loop. |
 | Records in queue / utilization | Derived | — | `(total − remaining) / total`, computed per connector/task/server/context row. |
-| Max queue bytes | Debezium `MaxQueueSizeInBytes` | `debezium_<domain>_max_queue_size_in_bytes` | Exported only when `max.queue.size.in.bytes` is configured positively; otherwise unavailable, never zero. |
-| Current queue bytes | Debezium `CurrentQueueSizeInBytes` | `debezium_<domain>_current_queue_size_in_bytes` | Measured queue volume in bytes; byte utilization divides it by the maximum. |
+| Max queue bytes | Debezium `MaxQueueSizeInBytes` | `debezium_<domain>_max_queue_size_in_bytes` | Shown exactly as the connector exports it. Debezium documents it as available when `max.queue.size.in.bytes` is configured positively; a real exported zero (common when unset) or a missing family stays raw, while the supplied exporter emits a gauge like any Debezium attribute. |
+| Current queue bytes | Debezium `CurrentQueueSizeInBytes` | `debezium_<domain>_current_queue_size_in_bytes` | Measured queue volume in bytes; derived byte utilization divides it by the maximum and additionally requires a positive maximum. |
 | Active records | Connect `SourceRecordActiveCount` / `SinkRecordActiveCount` | `kafka_connect_source_task_source_record_active_count`, `kafka_connect_sink_task_sink_record_active_count` | Records in the task pipeline not yet fully committed. This is **not** Kafka consumer lag. |
-| Active peak / rolling average | Connect `SourceRecordActiveCountMax/Avg`, `SinkRecordActiveCountMax/Avg` | `..._active_count_max`, `..._active_count_avg` | Peak is a task-lifetime maximum since worker start; average is a rolling gauge, neither is a current backlog. |
+| Active peak / average (windowed) | Connect `SourceRecordActiveCountMax/Avg`, `SinkRecordActiveCountMax/Avg` | `..._active_count_max`, `..._active_count_avg` | Backed by Kafka's sampled `Max`/`Avg` stats: the peak can decay as metric samples expire, so neither is a lifetime value and neither is a current backlog. |
 | Max Kafka consumer lag | Connect `SinkRecordLagMax` | `kafka_connect_sink_task_sink_record_lag_max` | Kafka consumer-group lag in records for the sink task's partitions. Shown only for sink rows, always labeled as consumer lag. |
 
 Behaviors mirror the other panels: zero or inconsistent capacity (remaining
@@ -698,33 +698,42 @@ and the [Debezium PostgreSQL monitoring tables](https://debezium.io/documentatio
 
 #### Induced Backlog Smoke Check
 
+The changing signal on this local stack is the sink task's **active-record
+count and windowed peak/average**, not consumer lag: the local Iceberg sink
+does not perform the Kafka range lookups that export `sink-record-lag-max`, so
+that column stays explicitly **unavailable** — never zero. On other sinks that
+export lag, a paused consumer instead shows lag growing and recovering.
+
 1. Run `just port-forward-all`, `just sync-secrets`, then `just ui`. Confirm the
    PostgreSQL source task and the Iceberg sink task are running, open
    `/monitor`, and record the queue, active-record and lag columns.
 2. Pause the Iceberg sink through the Control page (`/control/<sink>/pause`) so
    it stops consuming CDC topics while the source keeps producing. A paused sink
-   does not write data; unchanged Debezium queue utilization is expected.
+   does not write data; unchanged Debezium queue utilization is expected, and
+   the lag column is expected to stay **unavailable** on this sink.
 3. Insert a uniquely tagged small batch into `source_db.public.users` with the
    collision-safe insert from the throughput smoke check. Within collection and
-   browser refresh cycles the sink task's **max Kafka consumer lag** grows while
+   browser refresh cycles watch the **sink active-record count** rise while
    throughput read/sent rates fall toward zero and source rates stay positive —
    accumulating work is visible before any connector fails.
-4. Resume the sink (`/control/<sink>/resume`). Confirm the lag column recovers
-   toward zero, sink read/sent rates recover, and no queue utilization, active
-   record or connector state change was triggered by the panel itself.
+4. Resume the sink (`/control/<sink>/resume`). Confirm the active-record count
+   drains toward zero (the windowed peak keeps the observed maximum until the
+   sample expires), sink read/sent rates recover, and no queue utilization,
+   active record or connector state change was triggered by the panel itself.
 5. Clean up the smoke rows with the matching collision-safe delete and recheck
    the panel again.
 
 Issue #20 live smoke (local `my-connect-cluster:0.0.4` stack): the paused Iceberg
-sink project showed the panel changing instead of zero-filling — sink
+sink showed the panel changing instead of zero-filling — sink
 **active records rose to 5 (available)** with max consumer lag explicitly
 **unavailable** (the local Iceberg sink does not export
 `sink-record-lag-max` while its flow is constrained), source queue
-8192/8192 records stayed at utilization 0.00 with byte measurements
-**unavailable** because the local connector configures no
+8192/8192 records stayed at utilization 0.00 with byte readings kept as
+exported (`MaxQueueSizeInBytes` 0, byte utilization **unavailable**) because
+the local connector configures no
 `max.queue.size.in.bytes`. After resume, the same document showed sink active
-records **drained to 0 (available)** while the task-lifetime peak kept 5 and
-the rolling average recovered; source rates stayed positive throughout, and no
+records **drained to 0 (available)** while the windowed peak kept 5 and
+the windowed average recovered; source rates stayed positive throughout, and no
 panel reading altered connector behavior. This smoke check did not
 demonstrate nonzero queue utilization on this idle single-task source; the
 derived-fraction behavior (0.50 records, 0.25 bytes, zero/invalid capacity) is

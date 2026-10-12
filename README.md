@@ -217,14 +217,18 @@ See [streaming metric definitions, availability and live smoke procedure](k8s/RE
 Monitor also shows **queues and backpressure**:
 
 - Per Debezium connector/task/server/context: queue total and remaining record
-  capacity, derived record utilization `(total − remaining) / total`, and when
-  `max.queue.size.in.bytes` is configured positively, current/max queue bytes
-  with derived byte utilization. Utilization is computed per task, never
-  averaged or summed across tasks, and no alert threshold is invented. Missing,
-  zero or inconsistent capacity makes utilization explicitly unavailable
-  instead of zero; snapshot and streaming contexts keep separate labeled rows.
-- Per Kafka Connect source and sink task: active-record count, lifetime peak,
-  and rolling average. Active records are pipeline depth, **not Kafka consumer
+  capacity, derived record utilization `(total − remaining) / total`, and the
+  connector's byte queue measurements with derived byte utilization. Byte
+  readings are shown exactly as exported (without `max.queue.size.in.bytes` a
+  real zero or a missing family is kept as such); only the derived byte
+  utilization additionally requires a positive maximum. Utilization is computed
+  per task, never averaged or summed across tasks, and no alert threshold is
+  invented. Missing, zero or inconsistent capacity makes utilization
+  explicitly unavailable instead of zero; snapshot and streaming contexts keep
+  separate labeled rows.
+- Per Kafka Connect source and sink task: active-record count, windowed peak
+  and average (Kafka's sampled `Max`/`Avg` stats, which can decay as samples
+  expire). Active records are pipeline depth, **not Kafka consumer
   lag**; only the sink column labeled consumer lag shows Kafka's own
   `sink-record-lag-max`. Metrics never alter connector behavior.
 

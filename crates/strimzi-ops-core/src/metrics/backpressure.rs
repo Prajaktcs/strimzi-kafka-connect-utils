@@ -62,10 +62,12 @@ impl TaskKind {
 
 /// Debezium queue readings for one connector/task/server/context identity.
 ///
-/// Utilization is derived only from compatible values of the same row; byte
-/// measurements exist only when the connector configures a positive
-/// `max.queue.size.in.bytes`. Unavailable and collection-error readings never
-/// contain a value. Stale workers keep their last good values with stale state.
+/// Utilization is derived only from compatible values of the same row. Byte
+/// readings are exactly what the exporter sends: without
+/// `max.queue.size.in.bytes` a real exported zero or a missing family is
+/// kept as such; only the derived byte utilization additionally requires a
+/// positive maximum. Unavailable and collection-error readings never contain
+/// a value. Stale workers keep their last good values with stale state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DebeziumQueue {
     pub connector: String,
@@ -98,9 +100,11 @@ pub struct ConnectBackpressure {
     pub worker: String,
     pub kind: TaskKind,
     pub active_records: MetricLookup,
-    /// Lifetime maximum of the gauge since worker start, not a current depth.
+    /// Windowed maximum of the gauge (Kafka's sampled `Max` stat, which can
+    /// decay as samples expire), not a lifetime or current depth.
     pub active_records_max: MetricLookup,
-    /// Rolling average since the worker exposed the gauge, not a backlog.
+    /// Windowed average of the gauge (Kafka's sampled `Avg` stat), not a
+    /// backlog.
     pub active_records_avg: MetricLookup,
     /// Kafka consumer-group lag in records; sink tasks only.
     pub consumer_lag_max: MetricLookup,

@@ -10,6 +10,9 @@
 <p>Records/sec uses Kafka Connect's native rolling task rates, not counter differences. Connector rates are sums, never averages. Totals are current task-lifetime counters and can decrease after restarts or reassignment.</p>
 <p>Source written means records written to Kafka. Sink read means records read from Kafka; sink sent means records passed to the sink plugin, <strong>not durable downstream commits</strong>.</p>
 <p>Unsupported means no usable metric was exported. Unreachable means collection failed without a reading; stale values are historical. Ambiguous means duplicate task ownership or series, so no complete sum is shown. Missing task measurements or unhealthy workers also prevent complete connector sums.</p>
+{% if throughput_omitted > 0 %}
+<p class="notice">{{ throughput_omitted }} additional connector/task stage rows are not displayed. Throughput display is limited to 200 rows per response; connector totals still aggregate the complete snapshot.</p>
+{% endif %}
 {% if throughput.is_empty() %}
 <p class="notice">No connector/task identities available yet. Collection state above distinguishes unconfigured or unsupported metrics from an unreachable exporter.</p>
 {% endif %}

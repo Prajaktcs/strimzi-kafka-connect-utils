@@ -422,12 +422,16 @@ Throughput readings use these states (separate from raw collection states):
 | --- | --- |
 | available | Finite, nonnegative native reading; genuine zero means measured inactivity in the rolling window. |
 | unsupported | A required metric is missing/invalid or has unsupported extra dimensions. No complete sum is shown when any known task lacks the metric. |
-| stale | Historical task reading after failed/expired collection; never current throughput. Stale worker membership suppresses connector sums because tasks may be hidden. |
+| stale | Historical task reading after failed/expired collection; never current throughput. Stale worker membership or shared-cache expiry suppresses connector sums because tasks may be hidden. |
 | unreachable | Collection failed without a usable reading. An unreachable worker suppresses complete connector sums, but other healthy task readings remain available. |
 | ambiguous | More than one worker claims a connector/task, or multiple series claim a task measurement. No arbitrary owner is selected and duplicates are not summed. |
 
-Raw display truncation does not affect throughput aggregation. Status metrics
-retain known connector/task identities even when throughput is unsupported.
+Raw and throughput display truncation do not affect throughput aggregation.
+Connector/task tables share a separate **200 stage-row limit per response**:
+each rendered connector-stage or task-stage counts once. An exact omitted-row
+notice covers hidden tasks, stages and connectors. All task measurements still
+contribute to complete connector totals before truncation. Status metrics retain
+known connector/task identities even when throughput is unsupported.
 The backend cannot infer tasks whose identities and metrics are absent from
 every exporter; configure every worker with the supplied exporter rules.
 

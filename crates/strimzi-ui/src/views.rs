@@ -140,29 +140,79 @@ pub struct ThroughputConnectorView {
 }
 
 impl ThroughputConnectorView {
-    pub fn new(connector: ConnectorThroughput, expired: bool) -> Self {
-        Self {
-            connector: connector.connector,
-            stages: connector
-                .stages
-                .into_iter()
-                .map(|stage| ThroughputStageView::new(stage, expired))
-                .collect(),
-            tasks: connector
-                .tasks
-                .into_iter()
-                .map(|task| ThroughputTaskView {
+    fn new(connector: ConnectorThroughput, expired: bool, remaining: &mut usize) -> Self {
+        let stages = bounded_stages(connector.stages, expired, true, remaining);
+        let tasks = connector
+            .tasks
+            .into_iter()
+            .take(*remaining)
+            .filter_map(|task| {
+                let stages = bounded_stages(task.stages, expired, false, remaining);
+                (!stages.is_empty()).then_some(ThroughputTaskView {
                     task: task.task,
                     worker: task.worker,
-                    stages: task
-                        .stages
-                        .into_iter()
-                        .map(|stage| ThroughputStageView::new(stage, expired))
-                        .collect(),
+                    stages,
                 })
-                .collect(),
+            })
+            .collect();
+        Self {
+            connector: connector.connector,
+            stages,
+            tasks,
         }
     }
+}
+
+fn bounded_stages(
+    stages: Vec<ThroughputStage>,
+    expired: bool,
+    aggregate: bool,
+    remaining: &mut usize,
+) -> Vec<ThroughputStageView> {
+    let stages: Vec<_> = stages
+        .into_iter()
+        .take(*remaining)
+        .map(|mut stage| {
+            if expired && aggregate {
+                stage.rate.expire();
+                stage.total.expire();
+                stage.rate.value = None;
+                stage.total.value = None;
+            }
+            ThroughputStageView::new(stage, expired)
+        })
+        .collect();
+    *remaining -= stages.len();
+    stages
+}
+
+/// Bound formatted connector/task rows, never the underlying aggregation.
+pub fn throughput_views(
+    connectors: Vec<ConnectorThroughput>,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<ThroughputConnectorView>, usize) {
+    let mut remaining = row_limit;
+    let mut omitted = 0;
+    let mut views = Vec::new();
+    for connector in connectors {
+        let rows = connector.stages.len()
+            + connector
+                .tasks
+                .iter()
+                .map(|task| task.stages.len())
+                .sum::<usize>();
+        let before = remaining;
+        if remaining > 0 {
+            views.push(ThroughputConnectorView::new(
+                connector,
+                expired,
+                &mut remaining,
+            ));
+        }
+        omitted += rows - (before - remaining);
+    }
+    (views, omitted)
 }
 
 #[derive(Template)]
@@ -171,6 +221,7 @@ pub struct MetricsPanel<'a> {
     pub state: MetricState,
     pub workers: Vec<MetricsWorkerView<'a>>,
     pub throughput: Vec<ThroughputConnectorView>,
+    pub throughput_omitted: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -270,3 +321,7 @@ pub struct EditPage {
     pub validation_error: Option<String>,
     pub flash: Option<String>,
 }
+
+#[cfg(test)]
+#[path = "views_tests.rs"]
+mod tests;

@@ -268,6 +268,11 @@ remain usable. Unsupported, stale, unreachable and ambiguous readings are
 explicit, not fabricated zeroes. Tiny positive rates use scientific notation
 rather than rounding to zero.
 
+Connector and task throughput tables share a **200 stage-row display limit** per
+response, with an exact omitted-row notice; aggregation still uses all tasks.
+When the shared cache expires, connector sums are suppressed while task values
+remain explicitly historical/stale.
+
 The page refreshes every 10 seconds through `/monitor/metrics`, without a full-page
 reload; browser requests never start another collector or consume message payloads.
 Worker availability, last-good sample age and expandable raw measurements remain

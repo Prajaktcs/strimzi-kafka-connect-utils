@@ -17,8 +17,8 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    render, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage, MonitorPage,
-    MonitorResultsPage, SnapshotCard, SnapshotCards, ThroughputConnectorView,
+    render, throughput_views, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage,
+    MonitorPage, MonitorResultsPage, SnapshotCard, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -83,13 +83,16 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
             }
         })
         .collect();
+    let (throughput, throughput_omitted) = throughput_views(
+        connector_throughput(&cached.snapshot),
+        expired,
+        MAX_DISPLAYED_TOTAL,
+    );
     render(MetricsPanel {
         state: panel_state,
         workers,
-        throughput: connector_throughput(&cached.snapshot)
-            .into_iter()
-            .map(|connector| ThroughputConnectorView::new(connector, expired))
-            .collect(),
+        throughput,
+        throughput_omitted,
     })
 }
 

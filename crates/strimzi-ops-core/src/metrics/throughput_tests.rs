@@ -217,7 +217,7 @@ kafka_connect_connector_task_status{connector="unknown",task="0",status="paused"
     )]);
     assert_eq!(projection.len(), 2);
     assert_eq!(projection[0].connector, "empty");
-    assert!(projection[0].tasks.is_empty());
+    assert_eq!(projection[0].tasks, []);
     assert_eq!(projection[1].connector, "unknown");
     assert_eq!(projection[1].tasks.len(), 1);
     for connector in &projection {
@@ -522,7 +522,7 @@ kafka_connect_connector_source_record_write_total{connector="source",task="0"} 9
     )]);
     assert_eq!(projection.len(), 2);
     assert_eq!(projection[0].connector, "aggregate-only");
-    assert!(projection[0].tasks.is_empty());
+    assert_eq!(projection[0].tasks, []);
     assert_value(
         projection[0].stages[0].rate,
         ThroughputState::Unsupported,

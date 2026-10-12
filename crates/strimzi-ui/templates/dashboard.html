@@ -90,8 +90,8 @@
         <td class="mono">{{ row.worker }}</td>
         <td>{{ row.connector }}</td>
         <td>{{ row.task }}</td>
-        <td>{{ row.state }}</td>
-        <td>{% if let Some(count) = row.record_errors.count %}{{ count }}{% if let Some(rate) = row.record_errors.rate_per_sec %} ({{ rate }}/s){% endif %}{% if row.counter_reset %} <span>counter reset</span>{% endif %}{% else %}unavailable{% endif %}</td>
+        <td>{{ row.state }}{% if row.counter_reset %} <span>counter reset</span>{% endif %}</td>
+        <td>{% if let Some(count) = row.record_errors.count %}{{ count }}{% if let Some(rate) = row.record_errors.rate_per_sec %} ({{ rate }}/s){% endif %}{% else %}unavailable{% endif %}</td>
         <td>{% if let Some(count) = row.record_failures.count %}{{ count }}{% if let Some(rate) = row.record_failures.rate_per_sec %} ({{ rate }}/s){% endif %}{% else %}unavailable{% endif %}</td>
         <td>{% if let Some(count) = row.retries.count %}{{ count }}{% if let Some(rate) = row.retries.rate_per_sec %} ({{ rate }}/s){% endif %}{% else %}unavailable{% endif %}</td>
         <td>{% if let Some(count) = row.records_skipped.count %}{{ count }}{% else %}unavailable{% endif %}</td>

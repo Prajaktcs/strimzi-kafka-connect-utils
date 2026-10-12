@@ -281,3 +281,60 @@ async fn share_metric_collection_across_viewers_without_kafka_bootstrap() {
     task.abort();
     std::fs::remove_file(path).unwrap();
 }
+
+#[tokio::test]
+async fn distinguish_unconfigured_dashboard_metrics_from_unavailable_readings() {
+    let server = httpmock::MockServer::start();
+    let cluster = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/");
+        then.status(200)
+            .json_body(serde_json::json!({"version":"test"}));
+    });
+    let plugins = server.mock(|when, then| {
+        when.method(httpmock::Method::GET)
+            .path("/connector-plugins");
+        then.status(200).json_body(serde_json::json!([]));
+    });
+    let inventory = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/connectors");
+        then.status(200).json_body(serde_json::json!({}));
+    });
+    for (targets, expected) in [
+        (None, "not configured"),
+        (
+            Some(std::path::PathBuf::from("configured-targets.toml")),
+            "unavailable",
+        ),
+    ] {
+        let app = router(AppState::new(ConnectionSettings {
+            connect_url: Some(server.base_url()),
+            metrics_targets_file: targets,
+            ..ConnectionSettings::default()
+        }));
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/dashboard")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = std::str::from_utf8(&body).unwrap();
+        let state = html
+            .split("Exporter collection:")
+            .nth(1)
+            .unwrap()
+            .split("</strong>")
+            .next()
+            .unwrap();
+        assert!(state.contains(expected), "{state}");
+    }
+    cluster.assert_hits(2);
+    plugins.assert_hits(2);
+    inventory.assert_hits(2);
+}

@@ -250,6 +250,7 @@ pub struct ProcessingErrorsPanel {
     /// `None` when no metrics targets file is configured at all.
     pub state: Option<MetricState>,
     pub rows: Vec<ProcessingErrorRow>,
+    pub omitted: usize,
 }
 
 impl ProcessingErrorRow {

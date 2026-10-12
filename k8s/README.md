@@ -397,6 +397,15 @@ inside a connector's own implementation; REST task-state failures remain
 separate. Record errors/failures count failed operations, not unique records,
 and must not be added together.
 
+Current and previous failure samples are indexed once per report by worker,
+metric name and the complete label set; lookups do not rescan the scrape for
+each task. Dashboard output is limited to **25 task rows per worker and 200
+total**, with an omitted-row count; the shared metrics cache stays complete.
+Absent `metrics_targets_file` is shown as **not configured**, distinct from
+configured but unavailable measurements. A synthetic HTTPS browser smoke with
+10,225 task identities (10,000 on one worker) displayed 200 rows, no more than
+25 per worker, and reported all 10,025 omitted identities.
+
 |Panel column|Exporter metric|Meaning|
 |---|---|---|
 |Record errors|`kafka_connect_task_error_total_record_errors_total`|Operations that could not execute successfully|

@@ -66,6 +66,9 @@
   <p class="notice">Metrics unavailable. Configure <code>kafka.metrics_targets_file</code> and start <code>just port-forward-all</code>; no zeros are shown.</p>
   {% endif %}
   <p class="notice">Stale rows retain historical counts only; missing rates mean no valid baseline, a reset, or stale data. Reload the Dashboard to refresh this panel.</p>
+  {% if processing_errors.omitted > 0 %}
+  <p class="notice">{{ processing_errors.omitted }} additional task rows omitted. Display is limited to 25 rows per worker and 200 total; the metrics cache remains complete.</p>
+  {% endif %}
   {% if processing_errors.rows.is_empty() %}
   {% if processing_errors.has_exported_state() %}
   <p class="notice">No connector/task error metric series are currently exported.</p>

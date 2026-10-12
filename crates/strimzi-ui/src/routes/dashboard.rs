@@ -30,8 +30,11 @@ pub async fn dashboard(
     let flash = query.flash;
     let (mut page, dlq_configured) =
         with_connect_client(url, move |client| build_dashboard(client, flash)).await?;
-    // Pure cache reads: browsers never trigger collection or REST retries.
-    page.processing_errors = processing_errors_panel(&state.metrics_snapshot(), &dlq_configured);
+    // Preserve "not configured" separately from configured but unavailable data.
+    if state.settings.metrics_targets_file.is_some() {
+        page.processing_errors =
+            processing_errors_panel(&state.metrics_snapshot(), &dlq_configured);
+    }
     render(page)
 }
 
@@ -160,6 +163,9 @@ fn dlq_configuration(info: &Value) -> Option<bool> {
 /// cumulative exporter counters; rates span consecutive available collections.
 /// Collection failures surface as unavailable values, never as connector
 /// failures, and rows require a live metric series.
+const MAX_FAILURE_ROWS_PER_WORKER: usize = 25;
+const MAX_FAILURE_ROWS_TOTAL: usize = 200;
+
 fn processing_errors_panel(
     cached: &crate::metrics::CachedMetrics,
     dlq_configured: &BTreeMap<String, Option<bool>>,
@@ -179,9 +185,26 @@ fn processing_errors_panel(
     } else {
         report.state
     };
+    let mut per_worker = BTreeMap::new();
+    let mut displayed = 0;
+    let mut omitted = 0;
     let rows = report
         .tasks
         .into_iter()
+        .filter(|task| {
+            let worker_rows = per_worker.get(&task.worker).copied().unwrap_or(0);
+            if displayed >= MAX_FAILURE_ROWS_TOTAL || worker_rows >= MAX_FAILURE_ROWS_PER_WORKER {
+                omitted += 1;
+                return false;
+            }
+            if let Some(count) = per_worker.get_mut(&task.worker) {
+                *count += 1;
+            } else {
+                per_worker.insert(task.worker.clone(), 1);
+            }
+            displayed += 1;
+            true
+        })
         .map(|task| {
             let state = if expired && task.state == MetricState::Available {
                 MetricState::Stale
@@ -210,6 +233,7 @@ fn processing_errors_panel(
     ProcessingErrorsPanel {
         state: Some(state),
         rows,
+        omitted,
     }
 }
 
@@ -357,5 +381,52 @@ mod tests {
         assert!(!cells[7].contains(">0"));
         assert!(!cells[8].contains(">0"));
         assert!(cells[10].contains("unavailable"));
+    }
+
+    #[test]
+    fn cap_each_worker_and_total_rows_without_losing_omission_counts() {
+        for (workers, tasks) in [(1, 26), (9, 25)] {
+            let cached = crate::metrics::CachedMetrics {
+                snapshot: Arc::new(MetricsSnapshot {
+                    workers: (0..workers)
+                        .map(|worker| WorkerMetrics {
+                            worker: format!("worker-{worker}"),
+                            state: MetricState::Available,
+                            samples: Arc::new(
+                                (0..tasks)
+                                    .map(|task| MetricSample {
+                                        name: "kafka_connect_task_error_total_record_errors_total"
+                                            .to_owned(),
+                                        labels: BTreeMap::from([
+                                            ("connector".to_owned(), "orders".to_owned()),
+                                            ("task".to_owned(), task.to_string()),
+                                        ]),
+                                        value: 7.0,
+                                    })
+                                    .collect(),
+                            ),
+                            age_secs: Some(0),
+                            error: None,
+                        })
+                        .collect(),
+                    state: MetricState::Available,
+                }),
+                received: Instant::now(),
+                previous: None,
+            };
+            let panel = processing_errors_panel(&cached, &BTreeMap::new());
+            let expected =
+                (workers * tasks.min(MAX_FAILURE_ROWS_PER_WORKER)).min(MAX_FAILURE_ROWS_TOTAL);
+            assert_eq!(panel.rows.len(), expected);
+            assert_eq!(panel.omitted, workers * tasks - expected);
+            let mut per_worker = BTreeMap::new();
+            for row in &panel.rows {
+                *per_worker.entry(&row.worker).or_insert(0) += 1;
+                assert_eq!(row.record_errors.count, Some(7.0));
+            }
+            assert!(per_worker
+                .values()
+                .all(|count| *count <= MAX_FAILURE_ROWS_PER_WORKER));
+        }
     }
 }

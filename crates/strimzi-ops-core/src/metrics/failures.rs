@@ -22,6 +22,31 @@ const DLQ_REQUESTS: &str = "kafka_connect_task_error_deadletterqueue_produce_req
 const DLQ_FAILURES: &str = "kafka_connect_task_error_deadletterqueue_produce_failures_total";
 const LAST_ERROR_TIMESTAMP: &str = "kafka_connect_task_error_last_error_timestamp";
 
+type SeriesKey<'a> = (&'a str, &'a BTreeMap<String, String>, &'a str);
+type SampleIndex<'a> = BTreeMap<SeriesKey<'a>, (MetricState, f64)>;
+
+/// Borrow complete identities; index each round once, without copying labels.
+fn index_samples(snapshot: &MetricsSnapshot) -> SampleIndex<'_> {
+    snapshot
+        .workers
+        .iter()
+        .filter(|worker| matches!(worker.state, MetricState::Available | MetricState::Stale))
+        .flat_map(|worker| {
+            worker.samples.iter().filter_map(move |sample| {
+                if !is_failure_metric(&sample.name) {
+                    return None;
+                }
+                count_value(Some(sample.value)).map(|value| {
+                    (
+                        (worker.worker.as_str(), &sample.labels, sample.name.as_str()),
+                        (worker.state, value),
+                    )
+                })
+            })
+        })
+        .collect()
+}
+
 /// A cumulative counter and its derived per-second rate, if derivable.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct FailureCounter {
@@ -67,6 +92,8 @@ impl FailuresReport {
         interval: Option<Duration>,
     ) -> Self {
         let mut tasks = Vec::new();
+        let current_index = index_samples(current);
+        let previous_index = prev.map(index_samples).unwrap_or_default();
         for worker in &current.workers {
             let identities = worker
                 .samples
@@ -79,7 +106,14 @@ impl FailuresReport {
             for (labels, (connector, task)) in identities {
                 let mut counter_reset = false;
                 let mut counter = |name| {
-                    failure_counter(worker, prev, name, labels, interval, &mut counter_reset)
+                    failure_counter(
+                        (&current_index, &previous_index),
+                        &worker.worker,
+                        name,
+                        labels,
+                        interval,
+                        &mut counter_reset,
+                    )
                 };
                 let record_errors = counter(RECORD_ERRORS);
                 let record_failures = counter(RECORD_FAILURES);
@@ -88,8 +122,9 @@ impl FailuresReport {
                 let errors_logged = counter(ERRORS_LOGGED);
                 let dlq_writes = counter(DLQ_REQUESTS);
                 let dlq_failures = counter(DLQ_FAILURES);
-                let last_error_epoch =
-                    count_value(worker.lookup(LAST_ERROR_TIMESTAMP, labels).value);
+                let last_error_epoch = current_index
+                    .get(&(worker.worker.as_str(), labels, LAST_ERROR_TIMESTAMP))
+                    .map(|(_, value)| *value);
                 tasks.push(TaskFailures {
                     worker: worker.worker.clone(),
                     connector: connector.to_owned(),
@@ -151,34 +186,30 @@ fn count_value(value: Option<f64>) -> Option<f64> {
 }
 
 fn failure_counter(
-    worker: &super::types::WorkerMetrics,
-    prev: Option<&MetricsSnapshot>,
+    (current, previous): (&SampleIndex<'_>, &SampleIndex<'_>),
+    worker: &str,
     name: &str,
     labels: &BTreeMap<String, String>,
     interval: Option<Duration>,
     counter_reset: &mut bool,
 ) -> FailureCounter {
-    let current = worker.lookup(name, labels);
-    let count = count_value(current.value);
-    let rate_per_sec = match (count, prev, interval, current.state) {
-        // Rates need two consecutive available readings and a positive span.
-        (Some(current_raw), Some(prev), Some(interval), MetricState::Available) => {
-            let previous = prev.lookup(&worker.worker, name, labels);
-            count_value(previous.value)
-                .filter(|_| previous.state == MetricState::Available)
-                .and_then(|previous_raw| {
-                    let seconds = interval.as_secs_f64();
-                    if seconds <= 0.0 {
-                        None
-                    } else if current_raw >= previous_raw {
-                        Some((current_raw - previous_raw) / seconds)
-                    } else {
-                        // Counter restarted: the interval delta is unknowable.
-                        *counter_reset = true;
-                        None
-                    }
-                })
-        }
+    let reading = current.get(&(worker, labels, name)).copied();
+    let count = reading.map(|(_, value)| value);
+    let rate_per_sec = match (reading, interval) {
+        (Some((MetricState::Available, current_raw)), Some(interval)) => previous
+            .get(&(worker, labels, name))
+            .filter(|(state, _)| *state == MetricState::Available)
+            .and_then(|(_, previous_raw)| {
+                let seconds = interval.as_secs_f64();
+                if seconds <= 0.0 {
+                    None
+                } else if current_raw >= *previous_raw {
+                    Some((current_raw - previous_raw) / seconds)
+                } else {
+                    *counter_reset = true;
+                    None
+                }
+            }),
         _ => None,
     };
     FailureCounter {
@@ -278,7 +309,7 @@ mod tests {
         let current = worker("w0", MetricState::CollectionError, Vec::new());
         let report = FailuresReport::build(None, &current, Some(interval()));
         assert_eq!(report.state, MetricState::CollectionError);
-        assert!(report.tasks.is_empty());
+        assert_eq!(report.tasks, Vec::<TaskFailures>::new());
     }
 
     #[test]
@@ -369,7 +400,7 @@ mod tests {
             state: MetricState::Available,
         };
         let report = FailuresReport::build(None, &current, Some(interval()));
-        assert!(report.tasks.is_empty());
+        assert_eq!(report.tasks, Vec::<TaskFailures>::new());
     }
 
     #[test]
@@ -422,5 +453,30 @@ mod tests {
             assert_eq!(orders.record_errors.count, Some(14.0));
             assert_eq!(orders.record_errors.rate_per_sec, None);
         }
+    }
+
+    #[test]
+    fn index_preserves_complete_label_identity_between_rounds() {
+        let mut previous_samples = Vec::new();
+        let mut current_samples = Vec::new();
+        for (dimension, before, after) in [("a", 10.0, 30.0), ("b", 40.0, 90.0)] {
+            let mut previous = sample(RECORD_ERRORS, "orders", "0", before);
+            previous
+                .labels
+                .insert("dimension".to_owned(), dimension.to_owned());
+            let mut current = previous.clone();
+            current.value = after;
+            previous_samples.push(previous);
+            current_samples.push(current);
+        }
+        let previous = worker("w0", MetricState::Available, previous_samples);
+        let current = worker("w0", MetricState::Available, current_samples);
+        let report = FailuresReport::build(Some(&previous), &current, Some(interval()));
+        let readings: Vec<_> = report
+            .tasks
+            .iter()
+            .map(|row| (row.record_errors.count, row.record_errors.rate_per_sec))
+            .collect();
+        assert_eq!(readings, [(Some(30.0), Some(2.0)), (Some(90.0), Some(5.0))]);
     }
 }

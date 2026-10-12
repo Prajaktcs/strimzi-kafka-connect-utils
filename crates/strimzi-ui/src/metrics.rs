@@ -15,18 +15,26 @@ pub struct MetricsCache {
 }
 
 pub struct CachedMetrics {
-    pub snapshot: MetricsSnapshot,
+    pub snapshot: Arc<MetricsSnapshot>,
+    pub received: Instant,
+    /// Exactly one preceding round; stale/error rounds break rate baselines.
+    pub previous: Option<PreviousMetrics>,
+}
+
+pub struct PreviousMetrics {
+    pub snapshot: Arc<MetricsSnapshot>,
     pub received: Instant,
 }
 
 impl MetricsCache {
     pub fn new() -> Arc<Self> {
         let (latest, _) = watch::channel(Arc::new(CachedMetrics {
-            snapshot: MetricsSnapshot {
+            snapshot: Arc::new(MetricsSnapshot {
                 workers: Vec::new(),
                 state: MetricState::Unavailable,
-            },
+            }),
             received: Instant::now(),
+            previous: None,
         }));
         Arc::new(Self {
             latest,
@@ -61,9 +69,16 @@ impl MetricsCache {
                 let Some(cache) = cache.upgrade() else {
                     break;
                 };
+                let latest = cache.latest();
+                let previous = PreviousMetrics {
+                    snapshot: Arc::clone(&latest.snapshot),
+                    received: latest.received,
+                };
+                drop(latest);
                 cache.latest.send_replace(Arc::new(CachedMetrics {
-                    snapshot,
+                    snapshot: Arc::new(snapshot),
                     received: Instant::now(),
+                    previous: Some(previous),
                 }));
                 drop(cache);
                 // Delay after collection: no overlap or catch-up bursts.

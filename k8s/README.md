@@ -387,6 +387,88 @@ display limits, not scrape/sample limits.
 | collection error | A configured target or targets file (including a missing/unreadable configured file) failed before any successful data was collected. |
 | stale | A failed scrape/file refresh retains previously good samples, or cached samples are older than 30 seconds. Sample age is shown; retained values are not current. |
 
+### Processing Error and Dead-Letter Measurements
+
+The Dashboard's **Processing errors, retries and dead-letter activity** panel
+reads the same shared per-worker collection (no per-browser scraping). It
+derives one row per exported `(worker, connector, task)` identity. These
+measurements cover Connect's error-handling framework, not every exception
+inside a connector's own implementation; REST task-state failures remain
+separate. Record errors/failures count failed operations, not unique records,
+and must not be added together.
+
+Current and previous failure samples are indexed once per report by worker,
+metric name and the complete label set; lookups do not rescan the scrape for
+each task. Dashboard output is limited to **25 task rows per worker and 200
+total**, with an omitted-row count; the shared metrics cache stays complete.
+Absent `metrics_targets_file` is shown as **not configured**, distinct from
+configured but unavailable measurements. A synthetic HTTPS browser smoke with
+10,225 task identities (10,000 on one worker) displayed 200 rows, no more than
+25 per worker, and reported all 10,025 omitted identities.
+
+|Panel column|Exporter metric|Meaning|
+|---|---|---|
+|Record errors|`kafka_connect_task_error_total_record_errors_total`|Operations that could not execute successfully|
+|Record failures|`kafka_connect_task_error_total_record_failures_total`|Failed operations, including retriable attempts|
+|Retries|`kafka_connect_task_error_total_retries_total`|Operation retries|
+|Skipped|`kafka_connect_task_error_total_records_skipped_total`|Records skipped by error handling|
+|Logged|`kafka_connect_task_error_total_errors_logged_total`|Errors logged by Connect's error reporter|
+|DLQ write attempts|`kafka_connect_task_error_deadletterqueue_produce_requests_total`|Attempted DLQ writes, not successful deliveries|
+|DLQ failures|`kafka_connect_task_error_deadletterqueue_produce_failures_total`|DLQ write failures|
+|Last error|`kafka_connect_task_error_last_error_timestamp`|Unix epoch **milliseconds**; zero means no recorded error|
+
+Semantics:
+
+- **Counts are cumulative** for the exporter's current metric lifecycle.
+  They can reset when Connect recreates the task's metrics. **Rates** compare
+  two consecutive available collections using actual elapsed time (the
+  collector waits 10 seconds after each round). Only errors, failures and
+  retries currently display rates.
+- **Counter decreases** suppress that counter's rate for the interval and
+  flag the row `counter reset`. New workers/tasks, missing baselines and
+  collection failures suppress rates too. Workers, complete label sets,
+  connectors and tasks are never merged. A reset followed by enough activity
+  to exceed the old counter between scrapes is not observable from counters
+  alone; these are sampled rates, not exact event accounting.
+- **Availability is explicit**: missing or collection-error series show
+  `unavailable`, never a healthy zero. A collection failure is reported as a
+  collection failure, never as connector processing activity.
+- **DLQ status** uses the already-expanded connector REST config
+  (`errors.deadletterqueue.topic.name`); the topic name is never displayed.
+  Unset topics and source connectors show `not configured / unsupported`
+  instead of numeric DLQ counts, even if Connect exports zeros. Missing DLQ
+  measurements or config remain explicitly unavailable. A configured DLQ
+  with an exported zero has a real zero, not a fabricated reading.
+- **No payloads**: the panel shows only counters and timestamps; record
+  payloads, stack traces, and error messages are not newly exposed. Existing
+  REST task-state failure details remain in the separate failure list above
+  the panel.
+
+Local verification exercised malformed JSON conversion on an isolated Iceberg
+sink with `errors.tolerance=all`, strict JSON schema conversion, a pre-created
+DLQ topic, `errors.log.include.messages=false`, and
+`errors.deadletterqueue.context.headers.enable=false`. Record errors, failures,
+skipped/logged counts and DLQ attempts increased only for that connector/task;
+the DLQ received the rejected records. Consecutive collections produced
+nonzero derived rates. Disabled DLQs remained explicitly not configured.
+Counter decreases, worker changes, multiple task identities and stale/error
+baselines are covered by deterministic Rust regression tests.
+The final browser smoke also verified three malformed records updating only
+the correct task row, three records received by its DLQ, disabled DLQ count
+cells remaining nonnumeric, initial collection-error recovery, and explicitly
+stale historical counts with no rates after a scrape failure. Smoke resources
+and the temporary UI server were removed afterwards.
+
+For this local stack, create smoke connectors as **KafkaConnector resources**,
+not only through REST: `strimzi.io/use-connector-resources=true` causes the
+operator to delete unmanaged REST connectors. Delete only the smoke connector
+and its dedicated topics afterwards. Reload Dashboard for the current cached
+panel; the existing REST failure list is unchanged.
+
+Metric definitions: [Kafka 4.3.1 ErrorHandlingMetrics](https://github.com/apache/kafka/blob/4.3.1/connect/runtime/src/main/java/org/apache/kafka/connect/runtime/errors/ErrorHandlingMetrics.java).
+
+### Debezium Identity Tags
+
 The local PostgreSQL source explicitly uses
 `custom.metric.tags: connector=postgres-source-connector,task=0`. This is
 Debezium's supported property name, **not** `metrics.custom.tags`. PostgreSQL
@@ -567,6 +649,9 @@ Deleting only those three smoke rows changed events to 9 and deletes to 3, with
 connected (stale)** and historical counters; restoring the target recovered in
 the same document. A throwaway live-snapshot rendering check also verified missing
 connection/delay fields, cache expiry and exact row-cap omission.
+Permanent view regressions additionally cover fresh/disconnected readings,
+worker staleness, cache expiry, unavailable/error fields, and streaming row-limit
+boundaries (including zero and the 200-row display cap).
 
 The snapshot notification form was retained. A live notification session on this
 host reached the existing error surface because Kafka advertises internal broker

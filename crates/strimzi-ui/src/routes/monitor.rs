@@ -8,7 +8,8 @@ use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use strimzi_ops_core::metrics::{
-    connector_throughput, debezium_streaming, MetricState, STALE_AFTER,
+    connect_backpressure, connector_throughput, debezium_queues, debezium_streaming, MetricState,
+    STALE_AFTER,
 };
 use strimzi_ops_core::{NotificationMonitor, SnapshotTracker};
 use tokio::sync::watch;
@@ -19,8 +20,9 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    render, snapshot_metrics, streaming_views, throughput_views, HtmlResult, MetricsPanel,
-    MetricsWorkerView, MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCards,
+    active_views, queue_views, render, snapshot_metrics, streaming_views, throughput_views,
+    HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage, MonitorPage,
+    MonitorResultsPage, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -96,6 +98,16 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         expired,
         MAX_DISPLAYED_TOTAL,
     );
+    let (queues, queues_omitted) = queue_views(
+        debezium_queues(&cached.snapshot),
+        expired,
+        MAX_DISPLAYED_TOTAL,
+    );
+    let (actives, actives_omitted) = active_views(
+        connect_backpressure(&cached.snapshot),
+        expired,
+        MAX_DISPLAYED_TOTAL,
+    );
     render(MetricsPanel {
         state: panel_state,
         workers,
@@ -104,6 +116,10 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         streaming,
         streaming_omitted,
         snapshot_metrics: snapshot_metrics(&cached, None),
+        queues,
+        queues_omitted,
+        actives,
+        actives_omitted,
     })
 }
 

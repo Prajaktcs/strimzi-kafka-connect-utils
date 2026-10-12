@@ -790,6 +790,78 @@ Primary configuration references:
 - [Debezium PostgreSQL custom metric tags and monitoring](https://debezium.io/documentation/reference/3.7/connectors/postgresql.html#postgresql-monitoring).
 - [Strimzi 1.2.0 generated Connect NetworkPolicy](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/cluster-operator/src/main/java/io/strimzi/operator/cluster/model/KafkaConnectCluster.java).
 
+### Queue and Backpressure Measurements
+
+Monitor projects the Debezium queue and common Connect active-record metrics
+below. Utilization is derived here, never exported:
+
+| UI measurement | Native metric | Exported measurement | Meaning |
+| --- | --- | --- | --- |
+| Queue total capacity | Debezium `QueueTotalCapacity` (snapshot and streaming contexts) | `debezium_<domain>_queue_total_capacity` | Records the connector queue is designed to hold; record unit. |
+| Remaining capacity | Debezium `QueueRemainingCapacity` | `debezium_<domain>_queue_remaining_capacity` | Free records; the queue is shared between snapshot/streaming threads and the Connect poll loop. |
+| Records in queue / utilization | Derived | — | `(total − remaining) / total`, computed per connector/task/server/context row. |
+| Max queue bytes | Debezium `MaxQueueSizeInBytes` | `debezium_<domain>_max_queue_size_in_bytes` | Shown exactly as the connector exports it. Debezium documents it as available when `max.queue.size.in.bytes` is configured positively; a real exported zero (common when unset) or a missing family stays raw, while the supplied exporter emits a gauge like any Debezium attribute. |
+| Current queue bytes | Debezium `CurrentQueueSizeInBytes` | `debezium_<domain>_current_queue_size_in_bytes` | Measured queue volume in bytes; derived byte utilization divides it by the maximum and additionally requires a positive maximum. |
+| Active records | Connect `SourceRecordActiveCount` / `SinkRecordActiveCount` | `kafka_connect_source_task_source_record_active_count`, `kafka_connect_sink_task_sink_record_active_count` | Records in the task pipeline not yet fully committed. This is **not** Kafka consumer lag. |
+| Active peak / average (windowed) | Connect `SourceRecordActiveCountMax/Avg`, `SinkRecordActiveCountMax/Avg` | `..._active_count_max`, `..._active_count_avg` | Backed by Kafka's sampled `Max`/`Avg` stats: the peak can decay as metric samples expire, so neither is a lifetime value and neither is a current backlog. |
+| Max Kafka consumer lag | Connect `SinkRecordLagMax` | `kafka_connect_sink_task_sink_record_lag_max` | Kafka consumer-group lag in records for the sink task's partitions. Shown only for sink rows, always labeled as consumer lag. |
+
+Behaviors mirror the other panels: zero or inconsistent capacity (remaining
+above total), negative/nonfinite, extra-dimension (custom metric tags) or
+duplicate worker/series ownership mark the affected readings unavailable while
+keeping row identities and genuine values visible; collection errors never
+expose values; stale workers retain last good values marked stale. Snapshot and
+streaming contexts each keep their own labeled row instead of silently choosing
+a winner, and nothing is summed across queues or tasks. No connector behavior is
+altered from these readings.
+
+See [Kafka 4.3 Connect metric definitions](https://kafka.apache.org/43/generated/connect_metrics.html)
+and the [Debezium PostgreSQL monitoring tables](https://debezium.io/documentation/reference/3.7/connectors/postgresql.html#postgresql-monitoring).
+
+#### Induced Backlog Smoke Check
+
+The changing signal on this local stack is the sink task's **active-record
+count and windowed peak/average**, not consumer lag: the local Iceberg sink
+does not perform the Kafka range lookups that export `sink-record-lag-max`, so
+that column stays explicitly **unavailable** — never zero. On other sinks that
+export lag, a paused consumer instead shows lag growing and recovering.
+
+1. Run `just port-forward-all`, `just sync-secrets`, then `just ui`. Confirm the
+   PostgreSQL source task and the Iceberg sink task are running, open
+   `/monitor`, and record the queue, active-record and lag columns.
+2. Pause the Iceberg sink through the Control page (`/control/<sink>/pause`) so
+   it stops consuming CDC topics while the source keeps producing. A paused sink
+   does not write data; unchanged Debezium queue utilization is expected, and
+   the lag column is expected to stay **unavailable** on this sink.
+3. Insert a uniquely tagged small batch into `source_db.public.users` with the
+   collision-safe insert from the throughput smoke check. Within collection and
+   browser refresh cycles watch the **sink active-record count** rise while
+   throughput read/sent rates fall toward zero and source rates stay positive —
+   accumulating work is visible before any connector fails.
+4. Resume the sink (`/control/<sink>/resume`). Confirm the active-record count
+   drains toward zero (the windowed peak keeps the observed maximum until the
+   sample expires), sink read/sent rates recover, and no queue utilization,
+   active record or connector state change was triggered by the panel itself.
+5. Clean up the smoke rows with the matching collision-safe delete and recheck
+   the panel again.
+
+Issue #20 live smoke (local `my-connect-cluster:0.0.4` stack): the paused Iceberg
+sink showed the panel changing instead of zero-filling — sink
+**active records rose to 5 (available)** with max consumer lag explicitly
+**unavailable** (the local Iceberg sink does not export
+`sink-record-lag-max` while its flow is constrained), source queue
+8192/8192 records stayed at utilization 0.00 with byte readings kept as
+exported (`MaxQueueSizeInBytes` 0, byte utilization **unavailable**) because
+the local connector configures no
+`max.queue.size.in.bytes`. After resume, the same document showed sink active
+records **drained to 0 (available)** while the windowed peak kept 5 and
+the windowed average recovered; source rates stayed positive throughout, and no
+panel reading altered connector behavior. This smoke check did not
+demonstrate nonzero queue utilization on this idle single-task source; the
+derived-fraction behavior (0.50 records, 0.25 bytes, zero/invalid capacity) is
+covered by `crates/strimzi-ops-core/src/metrics/backpressure.rs` unit tests
+and the TLS-route integration test in `crates/strimzi-ui/tests/http_routes.rs`.
+
 ## Manifest Details
 
 ### 00-namespace.yaml

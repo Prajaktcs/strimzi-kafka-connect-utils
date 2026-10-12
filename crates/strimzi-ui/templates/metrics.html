@@ -74,6 +74,54 @@
   </div>
 </section>
 {% endif %}
+{% if !queues.is_empty() || !actives.is_empty() %}
+<section aria-label="Queues and backpressure">
+  <h4>Queues and backpressure</h4>
+  <p>Queue utilization is derived per connector task as (total capacity − remaining capacity) ÷ total capacity; byte utilization divides current by maximum bytes. Both are shown per task, never averaged or summed across tasks, and no alert threshold is invented: utilization near 1.0 means the queue is filling, and an exhausted queue is a connector failure risk.</p>
+  <p>Missing utilization means zero or inconsistent capacity, not zero occupancy. Byte readings are shown exactly as the connector exports them — without <code>max.queue.size.in.bytes</code> the exporter may emit a real zero or nothing; only the derived <strong>byte utilization</strong> requires a positive maximum, so it alone turns unavailable rather than zero. Snapshot and streaming contexts report the same underlying queue in separate labeled rows.</p>
+  <p>Active records are records the Kafka Connect task holds in its pipeline without having fully committed them — source tasks poll the database before writing Kafka, sink tasks consume Kafka before the plugin is done. <strong>Active records are not Kafka consumer lag.</strong> Only the sink column labeled consumer lag shows Kafka's own <code>sink-record-lag-max</code> in records.</p>
+  {% if queues_omitted > 0 %}
+  <p class="notice">{{ queues_omitted }} additional Debezium queue rows are not displayed. Queue display is independently limited to 200 rows per response; the backend cache remains complete.</p>
+  {% endif %}
+  {% if !queues.is_empty() %}
+  <div class="table-wrap">
+    <table>
+      <caption>Debezium connector queues ({{ queues.len() }} identity rows)</caption>
+      <thead><tr><th>Connector</th><th>Task</th><th>Worker</th><th>Domain</th><th>Server</th><th>Context</th><th>Total capacity (records)</th><th>Remaining (records)</th><th>Utilization</th><th>Max (bytes)</th><th>Current (bytes)</th><th>Byte utilization</th></tr></thead>
+      <tbody>
+      {% for row in queues %}
+        <tr>
+          <td>{{ row.connector }}</td><td>{{ row.task }}</td><td>{{ row.worker }}</td><td>{{ row.domain }}</td><td>{{ row.server }}</td><td>{{ row.context }}</td>
+          <td>{{ row.total_capacity }}</td><td>{{ row.remaining_capacity }}</td><td>{{ row.utilization }}</td>
+          <td>{{ row.max_queue_bytes }}</td><td>{{ row.current_queue_bytes }}</td><td>{{ row.bytes_utilization }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% if actives_omitted > 0 %}
+  <p class="notice">{{ actives_omitted }} additional Connect task rows are not displayed. Active-record display is independently limited to 200 rows per response; the backend cache remains complete.</p>
+  {% endif %}
+  {% if !actives.is_empty() %}
+  <div class="table-wrap">
+    <table>
+      <caption>Kafka Connect task active records ({{ actives.len() }} identity rows)</caption>
+      <thead><tr><th>Kind</th><th>Connector</th><th>Task</th><th>Worker</th><th>Active records</th><th>Active peak (windowed)</th><th>Average active (windowed)</th><th>Max Kafka consumer lag (records, sink only)</th></tr></thead>
+      <tbody>
+      {% for row in actives %}
+        <tr>
+          <td>{{ row.kind }}</td><td>{{ row.connector }}</td><td>{{ row.task }}</td><td>{{ row.worker }}</td>
+          <td>{{ row.active_records }}</td><td>{{ row.active_records_max }}</td><td>{{ row.active_records_avg }}</td>
+          <td>{{ row.consumer_lag_max }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
 {% for worker in workers %}
 <section>
   <h4>{{ worker.worker }} — {{ worker.state }}</h4>

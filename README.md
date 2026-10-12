@@ -214,6 +214,28 @@ delay rather than a wall-clock backlog estimate. The local PostgreSQL 3.7.0.Fina
 metric names and real CDC behavior were verified against the running exporter.
 See [streaming metric definitions, availability and live smoke procedure](k8s/README.md#debezium-streaming-health-and-source-delay).
 
+Monitor also shows **queues and backpressure**:
+
+- Per Debezium connector/task/server/context: queue total and remaining record
+  capacity, derived record utilization `(total − remaining) / total`, and the
+  connector's byte queue measurements with derived byte utilization. Byte
+  readings are shown exactly as exported (without `max.queue.size.in.bytes` a
+  real zero or a missing family is kept as such); only the derived byte
+  utilization additionally requires a positive maximum. Utilization is computed
+  per task, never averaged or summed across tasks, and no alert threshold is
+  invented. Missing, zero or inconsistent capacity makes utilization
+  explicitly unavailable instead of zero; snapshot and streaming contexts keep
+  separate labeled rows.
+- Per Kafka Connect source and sink task: active-record count, windowed peak
+  and average (Kafka's sampled `Max`/`Avg` stats, which can decay as samples
+  expire). Active records are pipeline depth, **not Kafka consumer
+  lag**; only the sink column labeled consumer lag shows Kafka's own
+  `sink-record-lag-max`. Metrics never alter connector behavior.
+
+Both tables share the shared display limits and state vocabulary (stale values
+are historical, collection errors show no values). See [queue and backpressure
+measurements, exporter notes and the induced-backlog smoke check](k8s/README.md#queue-and-backpressure-measurements).
+
 ## Usage
 
 ### Linter (CLI)

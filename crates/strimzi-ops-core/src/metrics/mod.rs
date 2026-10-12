@@ -8,12 +8,14 @@
 
 mod collector;
 mod parser;
+mod streaming;
 mod targets;
 mod throughput;
 mod types;
 
 pub use collector::{MetricsCollector, COLLECTION_INTERVAL, REQUEST_TIMEOUT, STALE_AFTER};
 pub use parser::parse_prometheus;
+pub use streaming::{debezium_streaming, DebeziumStreaming};
 pub use throughput::{
     connector_throughput, ConnectorThroughput, TaskThroughput, ThroughputStage, ThroughputState,
     ThroughputValue,

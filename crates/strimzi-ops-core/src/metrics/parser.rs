@@ -250,9 +250,10 @@ kafka_connect_source_task_source_record_poll_total{task="1",connector="orders"} 
 
     #[test]
     fn rejects_bounded_resources_and_accepts_comment_only_exporter() {
-        assert!(parse_prometheus("# HELP no_samples unavailable\n\n")
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            parse_prometheus("# HELP no_samples unavailable\n\n").unwrap(),
+            []
+        );
         assert!(parse_prometheus(&"x".repeat(MAX_RESPONSE_BYTES + 1)).is_err());
         assert!(parse_prometheus(&format!(
             "metric{{label=\"{}\"}} 1",

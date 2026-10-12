@@ -141,7 +141,7 @@ fn known_non_streaming_context_can_seed_missing_snapshot_attributes() {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].domain, "sql_server");
         assert_eq!(rows[0].context, "snapshot");
-        assert!(rows[0].rows.is_empty());
+        assert_eq!(rows[0].rows, [] as [SnapshotTableRows; 0]);
         for reading in readings(&rows[0]) {
             assert_reading(reading, MetricState::Unavailable, None);
         }
@@ -170,7 +170,10 @@ debezium_postgres_snapshot_running{connector="source",task="0",server="db"} 1
 debezium_postgres_snapshot_running{connector="source",task="0",server="db",context=""} 1
 debezium_postgres_arbitrary_attribute{connector="source",task="0",server="db",context="snapshot"} 1
 debezium__snapshot_running{connector="source",task="0",server="db",context="snapshot"} 1"#;
-    assert!(project(vec![worker("worker-a", MetricState::Available, text)]).is_empty());
+    assert_eq!(
+        project(vec![worker("worker-a", MetricState::Available, text)]),
+        [] as [DebeziumSnapshot; 0]
+    );
 }
 
 #[test]
@@ -423,11 +426,13 @@ fn stale_missing_invalid_error_and_unavailable_values_keep_correct_states() {
         }
         assert_reading(rows[0].rows[0].rows, state, None);
     }
-    assert!(debezium_snapshots(&MetricsSnapshot {
-        workers: vec![],
-        state: MetricState::CollectionError,
-    })
-    .is_empty());
+    assert_eq!(
+        debezium_snapshots(&MetricsSnapshot {
+            workers: vec![],
+            state: MetricState::CollectionError,
+        }),
+        [] as [DebeziumSnapshot; 0]
+    );
 }
 
 #[test]

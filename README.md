@@ -259,11 +259,33 @@ semantics](k8s/README.md#processing-error-and-dead-letter-measurements) and
 
 ### Monitor (UI)
 
-The Monitor landing page shows cached metrics availability, last-good sample age,
-and expandable raw measurements for each worker. It refreshes every 10 seconds
-through `/monitor/metrics`; browser requests never start another collector.
-Metrics do not require Kafka bootstrap servers. See [metrics setup](#per-worker-prometheus-metrics)
-for exporter access, identity labels, authentication, and stale/error semantics.
+The Monitor landing page shows **live connector and task throughput**:
+source records written to Kafka/sec, sink records read from Kafka/sec (before
+transforms), and sink records sent to the plugin/sec (after transforms).
+**Sink sent is not a durable downstream commit.** Each stage also shows its
+available current task-lifetime cumulative count.
+
+Rates use Kafka Connect's native rolling gauges, not counter differences.
+Connector rates and counters are **sums of unique tasks, never averages**.
+Counters can decrease after task restarts/reassignment; no delta-derived rate
+spikes are introduced. Duplicate task ownership or metric series are ambiguous;
+missing task measurements prevent complete sums. Any unhealthy worker prevents
+complete connector aggregates because it may hide tasks; healthy task readings
+remain usable. Unsupported, stale, unreachable and ambiguous readings are
+explicit, not fabricated zeroes. Tiny positive rates use scientific notation
+rather than rounding to zero.
+
+Connector and task throughput tables share a **200 stage-row display limit** per
+response, with an exact omitted-row notice; aggregation still uses all tasks.
+When the shared cache expires, connector sums are suppressed while task values
+remain explicitly historical/stale.
+
+The page refreshes every 10 seconds through `/monitor/metrics`, without a full-page
+reload; browser requests never start another collector or consume message payloads.
+Worker availability, last-good sample age and expandable raw measurements remain
+available. Metrics do not require Kafka bootstrap servers. See
+[metrics setup](#per-worker-prometheus-metrics) and the
+[real source/sink throughput smoke check](k8s/README.md#throughput-semantics-and-local-smoke-check).
 
 Track snapshot progress in real-time:
 

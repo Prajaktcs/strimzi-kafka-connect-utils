@@ -372,7 +372,7 @@ The UI server collects at most 32 workers concurrently, caps each response at
 2 MiB, uses a 3-second request timeout, and waits 10 seconds after each collection
 round before the next. Browser refreshes read the cached snapshot, not exporters.
 Samples keep the complete identity `(worker, metric name, all labels)`, including
-Connect `connector`/`task` and Debezium `server`/`context`; workers/tasks are never
+Connect `connector`/`task` and Debezium `server`/`context`; raw samples are never
 silently combined. Missing or non-finite values are unavailable, not zero.
 Kafka task-error `total-*` and `deadletterqueue-produce-*` cumulative metrics are
 exported as counters; `last-error-timestamp` remains a gauge.
@@ -469,6 +469,88 @@ tag to a multi-task connector without its own valid task identity. Keep
 regardless of ObjectName property order and retains Debezium's logical
 `server` (`topic.prefix`), `context` and domain; untagged Debezium MBeans are
 not assigned a guessed connector/task.
+
+### Throughput Semantics and Local Smoke Check
+
+Monitor projects the common Connect task metrics below, independent of plugin:
+
+| UI stage | Native task metrics (exported with underscores and `kafka_connect_` prefix) | Meaning |
+| --- | --- | --- |
+| Source records written | `source-task` / `source-record-write-rate`, `source-record-write-total` | Kafka output after transforms/filtering. |
+| Sink records read | `sink-task` / `sink-record-read-rate`, `sink-record-read-total` | Kafka input before transforms. |
+| Sink records sent | `sink-task` / `sink-record-send-rate`, `sink-record-send-total` | Records sent/put to the sink plugin after transforms; **not proof of durable downstream commits**. |
+
+See [Kafka 4.3 Connect metric definitions](https://kafka.apache.org/43/generated/connect_metrics.html).
+Rates are native rolling records/sec gauges, not successive counter differences.
+The UI sums each unique connector/task exactly once across workers, never
+averages rates or includes connector/worker aggregates. Cumulative values sum
+the current tasks' counters, not connector lifetime history: restarts and
+reassignment can reduce them without producing negative rates or reset spikes.
+Rates and counters are independently available; an absent counter does not
+invalidate an otherwise complete rate.
+
+Throughput readings use these states (separate from raw collection states):
+
+| State | Meaning |
+| --- | --- |
+| available | Finite, nonnegative native reading; genuine zero means measured inactivity in the rolling window. |
+| unsupported | A required metric is missing/invalid or has unsupported extra dimensions. No complete sum is shown when any known task lacks the metric. |
+| stale | Historical task reading after failed/expired collection; never current throughput. Stale worker membership or shared-cache expiry suppresses connector sums because tasks may be hidden. |
+| unreachable | Collection failed without a usable reading. An unreachable worker suppresses complete connector sums, but other healthy task readings remain available. |
+| ambiguous | More than one worker claims a connector/task, or multiple series claim a task measurement. No arbitrary owner is selected and duplicates are not summed. |
+
+Raw and throughput display truncation do not affect throughput aggregation.
+Connector/task tables share a separate **200 stage-row limit per response**:
+each rendered connector-stage or task-stage counts once. An exact omitted-row
+notice covers hidden tasks, stages and connectors. All task measurements still
+contribute to complete connector totals before truncation. Status metrics retain
+known connector/task identities even when throughput is unsupported.
+The backend cannot infer tasks whose identities and metrics are absent from
+every exporter; configure every worker with the supplied exporter rules.
+
+To exercise the existing local Debezium → Kafka → Iceberg path without consuming
+payloads:
+
+1. Run `just port-forward-all`, `just sync-secrets`, then `just ui`.
+   Confirm both connectors/tasks are running and open `/monitor`.
+2. Record the source write and sink read/send counters and task rows.
+3. Insert a uniquely tagged batch into the existing `source_db.public.users`:
+
+   ```bash
+   SMOKE_TAG="issue17-$(uuidgen)"
+   SMOKE_BASE="$(date +%s)000"
+   kubectl exec -n kafka postgres-0 -- \
+     psql -U postgres -d source_db -v ON_ERROR_STOP=1 -c \
+     "INSERT INTO public.users (id, name, email)
+      SELECT $SMOKE_BASE + n, '$SMOKE_TAG', '$SMOKE_TAG-' || n || '@example.test'
+      FROM generate_series(1, 10) AS n;"
+   ```
+
+   The insert aborts on any ID collision instead of overwriting existing rows.
+4. Leave Monitor open. Within collection/browser refresh cycles, source written
+   and sink read/sent counters should increase by 10 and native rates should
+   become positive. Check task rows and confirm their sums match connector rows.
+   Rates reflect rolling windows, not batch size/elapsed browser time.
+5. For optional source-only cleanup, retain the same shell variables:
+
+   ```bash
+   kubectl exec -n kafka postgres-0 -- \
+     psql -U postgres -d source_db -v ON_ERROR_STOP=1 -c \
+     "DELETE FROM public.users
+      WHERE id BETWEEN $SMOKE_BASE + 1 AND $SMOKE_BASE + 10
+        AND name = '$SMOKE_TAG'
+        AND email = '$SMOKE_TAG-' || (id - $SMOKE_BASE) || '@example.test';"
+   ```
+
+   Cleanup itself produces CDC traffic and does not erase Kafka history or
+   append-only Iceberg records. Do not infer durable Iceberg commits from these
+   throughput readings; use the independent catalog/S3 check above if needed.
+
+Issue #17 local smoke: ten committed PostgreSQL inserts moved source written
+from **1 to 11**, sink read/sent from **0 to 10**, with positive native rates in
+both connector and task tables. The browser retained the same document and
+observed HTMX swaps, proving updates without full-page navigation.
+
 
 Primary configuration references:
 - [Strimzi 1.2.0 Kafka Connect exporter example](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/examples/metrics/kafka-connect-metrics.yaml).

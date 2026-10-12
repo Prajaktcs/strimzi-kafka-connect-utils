@@ -118,6 +118,8 @@ echo "Waiting for Kafka cluster to be ready (this may take a few minutes)..."
 kubectl wait kafka/my-cluster --for=condition=Ready --timeout=600s -n ${NAMESPACE}
 echo "Kafka cluster is ready"
 
+# Reuse an existing Secret/CA; never replace live TLS identity during setup.
+bash ../scripts/local-dev.sh provision-metrics-tls
 # Deploy Kafka Connect
 echo "  - Kafka Connect"
 kubectl apply -f 03-kafka-connect.yaml

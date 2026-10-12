@@ -11,6 +11,8 @@ pub struct ConnectionSettings {
     pub connect_url: Option<String>,
     pub bootstrap_servers: Option<String>,
     pub connect_cluster_name: Option<String>,
+    /// Worker exporter membership; relative paths resolve beside secrets.toml.
+    pub metrics_targets_file: Option<PathBuf>,
 }
 
 impl ConnectionSettings {
@@ -38,6 +40,20 @@ impl ConnectionSettings {
                 .and_then(|section| section.get("connect_cluster_name"))
                 .and_then(toml::Value::as_str)
                 .map(str::to_owned),
+            metrics_targets_file: kafka
+                .and_then(|section| section.get("metrics_targets_file"))
+                .and_then(toml::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(|value| {
+                    let targets = PathBuf::from(value);
+                    if targets.is_absolute() {
+                        targets
+                    } else {
+                        path.parent()
+                            .unwrap_or_else(|| Path::new("."))
+                            .join(targets)
+                    }
+                }),
         })
     }
 
@@ -114,11 +130,56 @@ mod tests {
             connect_url: Some("http://from-file:8083".to_owned()),
             bootstrap_servers: Some("file:9092".to_owned()),
             connect_cluster_name: Some("file-cluster".to_owned()),
+            ..ConnectionSettings::default()
         }
         .merge_overrides(Some("http://cli:8083".to_owned()), None, None);
 
         assert_eq!(settings.connect_url.as_deref(), Some("http://cli:8083"));
         assert_eq!(settings.bootstrap_servers.as_deref(), Some("file:9092"));
         assert_eq!(settings.cluster_name(), "file-cluster");
+    }
+
+    #[test]
+    fn resolves_metrics_targets_beside_secrets_without_changing_absolute_paths() {
+        let directory = std::env::temp_dir().join(format!(
+            "strimzi-settings-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let secrets = directory.join("secrets.toml");
+        fs::write(
+            &secrets,
+            "[kafka]\nconnect_url='http://localhost:8083'\nmetrics_targets_file='.local/connect-metrics.toml'",
+        )
+        .unwrap();
+        let settings = ConnectionSettings::from_secrets_file(&secrets)
+            .unwrap()
+            .merge_overrides(Some("http://override:8083".to_owned()), None, None);
+        assert_eq!(
+            settings.metrics_targets_file,
+            Some(directory.join(".local/connect-metrics.toml"))
+        );
+        let absolute = directory.join("absolute-metrics.toml");
+        fs::write(
+            &secrets,
+            format!("[kafka]\nmetrics_targets_file='{}'", absolute.display()),
+        )
+        .unwrap();
+        assert_eq!(
+            ConnectionSettings::from_secrets_file(&secrets)
+                .unwrap()
+                .metrics_targets_file,
+            Some(absolute)
+        );
+        fs::write(&secrets, "[kafka]\nconnect_url='http://localhost:8083'").unwrap();
+        assert!(ConnectionSettings::from_secrets_file(&secrets)
+            .unwrap()
+            .metrics_targets_file
+            .is_none());
+        fs::remove_dir_all(directory).unwrap();
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod blocking;
 pub mod error;
+mod metrics;
 pub mod result;
 pub mod routes;
 pub mod state;

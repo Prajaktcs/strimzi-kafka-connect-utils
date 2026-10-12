@@ -57,6 +57,8 @@ h2 { margin: 0 0 0.35rem; }
 .metric strong { font-size: 1.4rem; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; }
 table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); }
+.table-wrap { max-width: 100%; overflow-x: auto; }
+.table-wrap td code { overflow-wrap: anywhere; }
 th, td { padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 th { background: #f8fafc; font-size: 0.85rem; color: var(--muted); }
 tr.focus { background: var(--focus); }

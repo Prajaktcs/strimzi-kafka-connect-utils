@@ -2,6 +2,7 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use strimzi_ops_core::metrics::{MetricSample, MetricState};
 
 use crate::error::Error;
 
@@ -57,6 +58,7 @@ pub struct MonitorPage {
     pub topic: String,
     pub duration: u64,
     pub error: Option<String>,
+    pub has_bootstrap: bool,
 }
 
 #[derive(Debug)]
@@ -78,6 +80,22 @@ pub struct MonitorResultsPage {
 #[template(path = "snapshot_cards.html")]
 pub struct SnapshotCards<'a> {
     pub snapshots: Vec<SnapshotCard<'a>>,
+}
+
+pub struct MetricsWorkerView<'a> {
+    pub worker: &'a str,
+    pub state: MetricState,
+    pub age: String,
+    pub error: Option<&'a str>,
+    pub samples: Vec<&'a MetricSample>,
+    pub omitted: usize,
+}
+
+#[derive(Template)]
+#[template(path = "metrics.html")]
+pub struct MetricsPanel<'a> {
+    pub state: MetricState,
+    pub workers: Vec<MetricsWorkerView<'a>>,
 }
 
 #[derive(Debug, Clone)]

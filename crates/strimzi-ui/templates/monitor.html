@@ -1,13 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Monitor — Strimzi Ops{% endblock %}
 {% block content %}
-<h2>Real-time Snapshot Monitoring</h2>
+<h2>Monitor</h2>
+<section aria-labelledby="metrics-heading">
+  <h3 id="metrics-heading">Connect and Debezium metrics</h3>
+  <p class="lede">Collected server-side from every configured worker. Values retain their worker, connector, task and context labels; missing data is never zero.</p>
+  <div hx-get="/monitor/metrics" hx-trigger="load, every 10s" hx-swap="innerHTML">
+    <p class="notice">Loading metrics availability…</p>
+  </div>
+</section>
+
+<h3>Snapshot notifications</h3>
 <p class="lede">Track Debezium snapshot progress via notification events</p>
 
 {% if let Some(err) = error %}
 <div class="error">{{ err }}</div>
 {% endif %}
 
+{% if has_bootstrap %}
 <form class="stack" method="post" action="/monitor">
   <label>
     Notification Topic
@@ -21,5 +31,8 @@
     <button type="submit">Start Monitoring</button>
   </div>
 </form>
-<p class="lede">Monitoring runs for the selected duration, then shows collected snapshot status.</p>
+<p class="lede">Snapshot status updates live during the selected duration. Leaving the page stops monitoring.</p>
+{% else %}
+<p class="notice">Kafka bootstrap servers are required for snapshot notifications, but not for metrics collection.</p>
+{% endif %}
 {% endblock %}

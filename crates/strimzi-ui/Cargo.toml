@@ -33,6 +33,9 @@ uuid.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+tempfile.workspace = true
 tower = { version = "0.5", features = ["util"] }
 
 [lints]

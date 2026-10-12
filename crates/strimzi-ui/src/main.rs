@@ -60,11 +60,6 @@ async fn run() -> strimzi_ui::result::Result<()> {
     )?;
     let state = AppState::new(settings);
 
-    let static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static");
-    let app = strimzi_ui::router(state)
-        .nest_service("/static", ServeDir::new(static_dir))
-        .layer(TraceLayer::new_for_http());
-
     let addr: SocketAddr = format!("{}:{}", cli.bind, cli.port)
         .parse()
         .map_err(|err| strimzi_ui::error::Error::Internal {
@@ -76,13 +71,24 @@ async fn run() -> strimzi_ui::result::Result<()> {
         .map_err(|source| strimzi_ui::error::Error::Internal {
             reason: format!("cannot bind {addr}: {source}"),
         })?;
+    let metrics_task = state.start_metrics();
+
+    let static_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static");
+    let app = strimzi_ui::router(state)
+        .nest_service("/static", ServeDir::new(static_dir))
+        .layer(TraceLayer::new_for_http());
 
     println!("strimzi-ui listening on http://{addr}");
 
-    axum::serve(listener, app)
-        .await
-        .map_err(|source| strimzi_ui::error::Error::Internal {
-            reason: format!("server error: {source}"),
-        })?;
+    let result =
+        axum::serve(listener, app)
+            .await
+            .map_err(|source| strimzi_ui::error::Error::Internal {
+                reason: format!("server error: {source}"),
+            });
+    if let Some(task) = metrics_task {
+        task.abort();
+    }
+    result?;
     Ok(())
 }

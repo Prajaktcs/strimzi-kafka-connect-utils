@@ -15,6 +15,8 @@ spec:
     database.password: password
     database.dbname: source_db
     topic.prefix: lakehouse
+    # PostgreSQL runs one Connect task; explicit identity for Debezium MBeans.
+    custom.metric.tags: connector=postgres-source-connector,task=0
     plugin.name: pgoutput
     slot.name: debezium_slot
     publication.name: debezium_publication

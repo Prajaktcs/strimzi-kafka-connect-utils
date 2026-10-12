@@ -4,6 +4,7 @@ pub mod connect;
 pub mod control;
 pub mod k8s;
 pub mod linter;
+pub mod metrics;
 pub mod monitor;
 pub mod parse;
 pub mod schema;

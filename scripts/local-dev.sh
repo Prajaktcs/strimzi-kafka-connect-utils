@@ -1,11 +1,156 @@
 #!/usr/bin/env bash
 # Helpers for one-command local setup (invoked from the justfile).
+# Never trace TLS passwords or Secret payloads, even when invoked with bash -x.
+set +x
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAMESPACE="${NAMESPACE:-kafka}"
 LOCAL_DIR="${ROOT}/.local"
 PID_DIR="${LOCAL_DIR}/port-forwards"
+METRICS_DIR="${PID_DIR}/metrics"
+METRICS_TARGETS="${LOCAL_DIR}/connect-metrics.toml"
+CONNECT_CLUSTER="${CONNECT_CLUSTER:-my-connect-cluster}"
+METRICS_TLS_DIR="${LOCAL_DIR}/connect-metrics-tls"
+METRICS_TLS_SECRET="connect-metrics-tls"
+METRICS_GENERATION="https-ca-v1"
+
+require_metrics_tls_tools() {
+  if ! command -v openssl >/dev/null 2>&1; then
+    echo "openssl is required for local metrics TLS provisioning and CA synchronization." >&2
+    return 1
+  fi
+}
+
+metrics_tls_secret_exists() {
+  local name
+  # An API/RBAC failure must stop provisioning, not masquerade as an absent Secret.
+  name="$(kubectl --request-timeout=5s get secret "${METRICS_TLS_SECRET}" \
+    -n "${NAMESPACE}" --ignore-not-found -o name)" || return 1
+  [[ -n "${name}" ]]
+}
+
+sync_metrics_ca() (
+  set -euo pipefail
+  umask 077
+  require_metrics_tls_tools
+  mkdir -p "${LOCAL_DIR}"
+  local tmp backup
+  tmp="$(mktemp "${LOCAL_DIR}/connect-metrics-ca.XXXXXX")"
+  trap 'rm -f "${tmp}"' EXIT
+  # Fetch only the public certificate; other checkouts need no server private key.
+  kubectl --request-timeout=5s get secret "${METRICS_TLS_SECRET}" -n "${NAMESPACE}" \
+    -o jsonpath='{.data.ca\.crt}' | openssl base64 -d -A >"${tmp}"
+  if ! openssl x509 -in "${tmp}" -noout >/dev/null 2>&1; then
+    echo "Metrics TLS Secret has no valid public ca.crt; preserve it and repair explicitly." >&2
+    return 1
+  fi
+  mkdir -p "${METRICS_TLS_DIR}"
+  chmod 700 "${METRICS_TLS_DIR}"
+  if [[ -f "${METRICS_TLS_DIR}/ca.crt" ]]; then
+    if cmp -s "${METRICS_TLS_DIR}/ca.crt" "${tmp}"; then return 0; fi
+    # Preserve previous trust for deliberate rotation/rollback, never private keys.
+    backup="$(mktemp "${METRICS_TLS_DIR}/ca.crt.retained.XXXXXX")"
+    cp -p "${METRICS_TLS_DIR}/ca.crt" "${backup}"
+  fi
+  chmod 600 "${tmp}"
+  mv -f "${tmp}" "${METRICS_TLS_DIR}/ca.crt"
+)
+
+provision_metrics_tls() (
+  set -euo pipefail
+  umask 077
+  require_metrics_tls_tools
+  mkdir -p "${LOCAL_DIR}"
+  local secret_name secret_keys staging="" file
+  # Query once with errors preserved: never generate a replacement on API failure.
+  secret_name="$(kubectl --request-timeout=5s get secret "${METRICS_TLS_SECRET}" \
+    -n "${NAMESPACE}" --ignore-not-found -o name)"
+  if [[ -n "${secret_name}" ]]; then
+    secret_keys="$(kubectl --request-timeout=5s get secret "${METRICS_TLS_SECRET}" \
+      -n "${NAMESPACE}" -o go-template='{{if and (index .data "server.p12") (index .data "password") (index .data "ca.crt")}}complete{{end}}')"
+    if [[ "${secret_keys}" != complete ]]; then
+      echo "Existing metrics TLS Secret is incomplete; refusing to replace its identity." >&2
+      return 1
+    fi
+    sync_metrics_ca
+    echo "Reusing Kubernetes metrics TLS Secret and synchronizing its public CA."
+    return 0
+  fi
+  if ! mkdir "${LOCAL_DIR}/connect-metrics-tls.lock" 2>/dev/null; then
+    echo "TLS provisioning lock exists; another provisioner may be running." >&2
+    return 1
+  fi
+  trap 'if [[ -n "${staging}" ]]; then rm -rf "${staging}"; fi; rmdir "${LOCAL_DIR}/connect-metrics-tls.lock"' EXIT
+  if [[ -d "${METRICS_TLS_DIR}" ]]; then
+    # Incomplete/public-only material needs explicit recovery, not a new CA.
+    for file in ca.key issuer.crt server.key server.crt server.p12 password; do
+      if [[ ! -s "${METRICS_TLS_DIR}/${file}" ]]; then
+        echo "Local TLS material is incomplete; restore its backup before provisioning a missing Secret." >&2
+        return 1
+      fi
+    done
+    chmod 700 "${METRICS_TLS_DIR}"
+    chmod 600 "${METRICS_TLS_DIR}"/{ca.key,issuer.crt,server.key,server.crt,server.p12,password}
+    if ! openssl verify -CAfile "${METRICS_TLS_DIR}/issuer.crt" \
+      "${METRICS_TLS_DIR}/server.crt" >/dev/null 2>&1 \
+      || ! openssl x509 -in "${METRICS_TLS_DIR}/issuer.crt" -checkend 0 -noout >/dev/null 2>&1 \
+      || ! openssl pkcs12 -in "${METRICS_TLS_DIR}/server.p12" \
+        -passin "file:${METRICS_TLS_DIR}/password" -noout >/dev/null 2>&1; then
+      echo "Local metrics TLS material is invalid/expired; renew explicitly, retaining rollback material." >&2
+      return 1
+    fi
+  else
+    staging="$(mktemp -d "${LOCAL_DIR}/connect-metrics-tls.XXXXXX")"
+    cat >"${staging}/openssl.cnf" <<'EOF'
+[req]
+distinguished_name = dn
+prompt = no
+[dn]
+CN = Local Connect metrics
+[ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+subjectKeyIdentifier = hash
+[server]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = IP:127.0.0.1,DNS:localhost
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+EOF
+    openssl genrsa -out "${staging}/ca.key" 3072 >/dev/null 2>&1
+    openssl req -new -x509 -sha256 -days 3650 -key "${staging}/ca.key" \
+      -out "${staging}/issuer.crt" -config "${staging}/openssl.cnf" -extensions ca
+    openssl genrsa -out "${staging}/server.key" 2048 >/dev/null 2>&1
+    openssl req -new -key "${staging}/server.key" -out "${staging}/server.csr" \
+      -config "${staging}/openssl.cnf"
+    openssl x509 -req -sha256 -days 365 -in "${staging}/server.csr" \
+      -CA "${staging}/issuer.crt" -CAkey "${staging}/ca.key" -CAcreateserial \
+      -out "${staging}/server.crt" -extfile "${staging}/openssl.cnf" -extensions server \
+      >/dev/null 2>&1
+    openssl rand -hex 32 >"${staging}/password"
+    openssl pkcs12 -export -name localhost -inkey "${staging}/server.key" \
+      -in "${staging}/server.crt" -certfile "${staging}/issuer.crt" \
+      -out "${staging}/server.p12" -passout "file:${staging}/password"
+    cp "${staging}/issuer.crt" "${staging}/ca.crt"
+    rm -f "${staging}/server.csr" "${staging}/issuer.srl" "${staging}/openssl.cnf"
+    chmod 600 "${staging}"/*
+    mv "${staging}" "${METRICS_TLS_DIR}"
+    staging=""
+  fi
+  # create (not apply) cannot overwrite a Secret that appeared concurrently.
+  if ! kubectl create secret generic "${METRICS_TLS_SECRET}" -n "${NAMESPACE}" \
+    --from-file="server.p12=${METRICS_TLS_DIR}/server.p12" \
+    --from-file="password=${METRICS_TLS_DIR}/password" \
+    --from-file="ca.crt=${METRICS_TLS_DIR}/issuer.crt" --dry-run=client -o yaml \
+    | kubectl create -f - >/dev/null; then
+    if ! metrics_tls_secret_exists; then return 1; fi
+  fi
+  sync_metrics_ca
+  echo "Metrics TLS Secret ready; private material retained under .local/connect-metrics-tls."
+)
 
 ensure_buildx() {
   if docker buildx version >/dev/null 2>&1; then
@@ -97,6 +242,7 @@ write_secrets() {
 [kafka]
 bootstrap_servers = "127.0.0.1:9092"
 connect_url = "http://127.0.0.1:8083"
+metrics_targets_file = ".local/connect-metrics.toml"
 
 [storage]
 type = "s3"
@@ -194,13 +340,235 @@ start_port_forward() {
   fi
   return 1
 }
+# Metrics forwards are owned by one supervisor, never by a load-balanced Service.
+# State files use Kubernetes pod names (DNS labels), so TOML quoting is unambiguous.
+metrics_process_running() {
+  local pid="$1" expected="$2" command
+  [[ "${pid}" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "${pid}" 2>/dev/null || return 1
+  command="$(ps -p "${pid}" -o command= 2>/dev/null)" || return 1
+  [[ "${command}" == *"${expected}"* ]]
+}
+
+stop_metrics_child() {
+  local state="$1" pid
+  if [[ -f "${state}/pid" ]]; then
+    pid="$(cat "${state}/pid")"
+    if metrics_process_running "${pid}" "pod/$(basename "${state}")"; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+    fi
+    rm -f "${state}/pid"
+  fi
+}
+
+publish_metrics_targets() {
+  local reachable="$1" state port tmp
+  tmp="$(mktemp "${LOCAL_DIR}/connect-metrics.toml.XXXXXX")"
+  {
+    echo "# Generated by the local Connect pod forwarding supervisor."
+    # Explicit empty array keeps the file valid when no Connect pods exist.
+    local any=false
+    for state in "${METRICS_DIR}"/workers/*; do
+      [[ -d "${state}" ]] || continue
+      any=true
+      port=0
+      if [[ "${reachable}" == true && -f "${state}/pid" ]]; then
+        port="$(cat "${state}/port")"
+      fi
+      printf '[[workers]]\nid = "%s"\nurl = "https://127.0.0.1:%s/metrics"\nca_file = "connect-metrics-tls/ca.crt"\n\n' \
+        "$(basename "${state}")" "${port}"
+    done
+    if [[ "${any}" == false ]]; then echo 'workers = []'; fi
+  } >"${tmp}"
+  chmod 600 "${tmp}"
+  mv -f "${tmp}" "${METRICS_TARGETS}"
+}
+
+metrics_supervisor_cleanup() {
+  local state
+  for state in "${METRICS_DIR}"/workers/*; do
+    [[ -d "${state}" ]] || continue
+    stop_metrics_child "${state}"
+  done
+  if [[ -n "${sleeper:-}" ]]; then kill "${sleeper}" 2>/dev/null || true; fi
+  # Keep known identities but make stopped endpoints fail, not falsely healthy.
+  publish_metrics_targets false
+  rm -f "${PID_DIR}/metrics-supervisor.pid"
+  rm -f "${METRICS_DIR}/generation"
+  rmdir "${METRICS_DIR}/lock" 2>/dev/null || true
+}
+
+metrics_supervisor() {
+  umask 077
+  mkdir -p "${METRICS_DIR}/workers"
+  trap metrics_supervisor_cleanup EXIT
+  trap 'exit 0' TERM INT
+  printf '%s\n' "${METRICS_GENERATION}" >"${METRICS_DIR}/generation"
+  local pods pod uid phase ready deleting state port pid old_uid
+  local next_port=9404 sleeper=""
+  # Reclaim only children recorded by a previous supervisor, never listeners.
+  for state in "${METRICS_DIR}"/workers/*; do
+    [[ -d "${state}" ]] || continue
+    stop_metrics_child "${state}"
+    port="$(cat "${state}/port")"
+    if (( port >= next_port )); then next_port=$((port + 1)); fi
+  done
+  publish_metrics_targets false
+  while true; do
+    # Do not filter by readiness: pending, failed and terminating pods still
+    # appear as worker identities with deliberately unreachable endpoints.
+    if pods="$(kubectl --request-timeout=5s get pods -n "${NAMESPACE}" \
+      -l "strimzi.io/name=${CONNECT_CLUSTER}-connect" \
+      --sort-by=.metadata.name \
+      -o go-template='{{range .items}}{{.metadata.name}} {{.metadata.uid}} {{.status.phase}} {{range .status.conditions}}{{if eq .type "Ready"}}{{.status}}{{end}}{{end}} {{if .metadata.deletionTimestamp}}deleting{{else}}active{{end}}{{"\n"}}{{end}}' \
+      2>/dev/null)"; then
+      for state in "${METRICS_DIR}"/workers/*; do
+        [[ -d "${state}" ]] || continue
+        rm -f "${state}/seen"
+      done
+      while read -r pod uid phase ready deleting; do
+        [[ -n "${pod}" ]] || continue
+        state="${METRICS_DIR}/workers/${pod}"
+        mkdir -p "${state}"
+        : >"${state}/seen"
+        old_uid=""
+        if [[ -f "${state}/uid" ]]; then old_uid="$(cat "${state}/uid")"; fi
+        if [[ "${uid}" != "${old_uid}" ]]; then stop_metrics_child "${state}"; fi
+        printf '%s\n' "${uid}" >"${state}/uid"
+        if [[ ! -f "${state}/port" ]]; then
+          while port_listening "${next_port}"; do next_port=$((next_port + 1)); done
+          printf '%s\n' "${next_port}" >"${state}/port"
+          next_port=$((next_port + 1))
+        fi
+        if [[ "${phase}" != Running || "${ready}" != True || "${deleting}" != active ]]; then
+          stop_metrics_child "${state}"
+          continue
+        fi
+        if [[ -f "${state}/pid" ]]; then
+          pid="$(cat "${state}/pid")"
+          if metrics_process_running "${pid}" "pod/${pod}"; then continue; fi
+          rm -f "${state}/pid"
+        fi
+        port="$(cat "${state}/port")"
+        if port_listening "${port}"; then
+          # Someone else owns the port. Choose another; never kill or scrape them.
+          while port_listening "${next_port}"; do next_port=$((next_port + 1)); done
+          port="${next_port}"
+          printf '%s\n' "${port}" >"${state}/port"
+          next_port=$((next_port + 1))
+        fi
+        kubectl --request-timeout=5s port-forward --pod-running-timeout=1s \
+          --address 127.0.0.1 -n "${NAMESPACE}" "pod/${pod}" "${port}:9404" \
+          >"${state}/forward.log" 2>&1 &
+        printf '%s\n' "$!" >"${state}/pid"
+      done <<<"${pods}"
+      for state in "${METRICS_DIR}"/workers/*; do
+        [[ -d "${state}" ]] || continue
+        if [[ ! -f "${state}/seen" ]]; then
+          stop_metrics_child "${state}"
+          rm -rf "${state}"
+        fi
+      done
+      publish_metrics_targets true
+    else
+      echo "Connect pod discovery failed; retaining known worker identities."
+      for state in "${METRICS_DIR}"/workers/*; do
+        [[ -d "${state}" ]] || continue
+        stop_metrics_child "${state}"
+      done
+      publish_metrics_targets false
+    fi
+    # Sleep as a tracked child so TERM interrupts the interval immediately.
+    sleep 15 &
+    sleeper=$!
+    wait "${sleeper}" || true
+  done
+}
+
+start_metrics_supervisor() {
+  local pid_file="${PID_DIR}/metrics-supervisor.pid" pid
+  mkdir -p "${METRICS_DIR}"
+  if [[ -f "${pid_file}" ]]; then
+    pid="$(cat "${pid_file}")"
+    if metrics_process_running "${pid}" "${ROOT}/scripts/local-dev.sh metrics-supervisor"; then
+      if [[ -f "${METRICS_DIR}/generation" ]] \
+        && [[ "$(cat "${METRICS_DIR}/generation")" == "${METRICS_GENERATION}" ]]; then
+        echo "Metrics supervisor already running (pid ${pid})"
+        return 0
+      fi
+      echo "Restarting the tracked pre-TLS metrics supervisor."
+      stop_metrics_supervisor
+    fi
+    rm -f "${pid_file}"
+  fi
+  # Atomic lock prevents concurrent port-forward-all commands spawning owners.
+  if ! mkdir "${METRICS_DIR}/lock" 2>/dev/null; then
+    echo "Metrics supervisor lock exists: run just stop-forwards before restarting."
+    return 1
+  fi
+  nohup bash "${ROOT}/scripts/local-dev.sh" metrics-supervisor \
+    >"${METRICS_DIR}/supervisor.log" 2>&1 &
+  pid=$!
+  printf '%s\n' "${pid}" >"${pid_file}"
+  disown "${pid}" 2>/dev/null || true
+  echo "Metrics supervisor started (pid ${pid}; targets ${METRICS_TARGETS})"
+}
+
+stop_metrics_supervisor() {
+  local pid_file="${PID_DIR}/metrics-supervisor.pid" pid state
+  if [[ -f "${pid_file}" ]]; then
+    pid="$(cat "${pid_file}")"
+    if metrics_process_running "${pid}" "${ROOT}/scripts/local-dev.sh metrics-supervisor"; then
+      kill "${pid}" 2>/dev/null || true
+      # Allow a bounded API request and the EXIT trap to finish before cleanup.
+      for _ in 1 2 3 4 5 6 7; do
+        if ! metrics_process_running "${pid}" "${ROOT}/scripts/local-dev.sh metrics-supervisor"; then break; fi
+        sleep 1
+      done
+      if metrics_process_running "${pid}" "${ROOT}/scripts/local-dev.sh metrics-supervisor"; then
+        echo "Metrics supervisor is still shutting down; retry just stop-forwards."
+        return 1
+      fi
+    fi
+  fi
+  mkdir -p "${METRICS_DIR}/workers"
+  metrics_supervisor_cleanup
+}
+
+status_metrics_forwards() {
+  local pid state port
+  if [[ -f "${PID_DIR}/metrics-supervisor.pid" ]]; then
+    pid="$(cat "${PID_DIR}/metrics-supervisor.pid")"
+    if metrics_process_running "${pid}" "${ROOT}/scripts/local-dev.sh metrics-supervisor"; then
+      echo "  metrics-supervisor: up (pid ${pid}; refresh every 15s)"
+    else
+      echo "  metrics-supervisor: down (stale pid file)"
+    fi
+  else
+    echo "  metrics-supervisor: down"
+  fi
+  for state in "${METRICS_DIR}"/workers/*; do
+    [[ -d "${state}" ]] || continue
+    port="$(cat "${state}/port")"
+    if [[ -f "${state}/pid" ]] && metrics_process_running "$(cat "${state}/pid")" "pod/$(basename "${state}")" && port_listening "${port}"; then
+      echo "    $(basename "${state}"): up → https://127.0.0.1:${port}/metrics"
+    else
+      echo "    $(basename "${state}"): collection error (no healthy tracked forward)"
+    fi
+  done
+}
+
 
 port_forward_all() {
+  # Retrieve public trust before publishing HTTPS targets, including other checkouts.
+  sync_metrics_ca
   start_port_forward connect svc/my-connect-cluster-connect-api 8083 8083
   start_port_forward kafka svc/my-cluster-kafka-bootstrap 9092 9092
   start_port_forward postgres svc/postgres 5432 5432
   start_port_forward rustfs svc/rustfs 9000 9000
   start_port_forward rustfs-console svc/rustfs 9001 9001
+  start_metrics_supervisor
 
   if curl -sf --connect-timeout 3 "http://127.0.0.1:8083/" >/dev/null; then
     echo "Connect API healthy at http://127.0.0.1:8083/"
@@ -240,9 +608,11 @@ status_port_forwards() {
       echo "  ${name}: down"
     fi
   done
+  status_metrics_forwards
 }
 
 stop_port_forwards() {
+  stop_metrics_supervisor
   if [[ ! -d "${PID_DIR}" ]]; then
     echo "No port-forwards to stop."
     # Still clear any stray listeners on known ports.
@@ -278,6 +648,7 @@ Usage: $0 <command>
 Commands:
   ensure-cluster
   ensure-buildx
+  provision-metrics-tls
   sync-secrets
   apply-connector
   port-forward-all
@@ -292,11 +663,13 @@ main() {
   case "${cmd}" in
     ensure-cluster) ensure_cluster ;;
     ensure-buildx) ensure_buildx ;;
+    provision-metrics-tls) provision_metrics_tls ;;
     sync-secrets) sync_secrets "$@" ;;
     apply-connector) apply_connector ;;
     port-forward-all) port_forward_all ;;
     status-forwards) status_port_forwards ;;
     stop-forwards) stop_port_forwards ;;
+    metrics-supervisor) metrics_supervisor ;;
     *) usage; exit 1 ;;
   esac
 }

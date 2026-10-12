@@ -7,6 +7,11 @@ use strimzi_ui::{router, AppState};
 use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
+#[path = "../../strimzi-ops-core/tests/support/tls.rs"]
+mod tls;
+
+use tls::TlsMockServer;
+
 #[tokio::test]
 async fn reject_monitor_stream_without_bootstrap_servers() {
     let app = router(AppState::new(ConnectionSettings::default()));
@@ -216,4 +221,132 @@ async fn reject_connector_creation_for_get_and_post() {
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method}");
     }
+}
+
+#[tokio::test]
+async fn share_metric_collection_across_viewers_without_kafka_bootstrap() {
+    let server = TlsMockServer::start();
+    let scrape = server.mock(|when, then| {
+        when.method(httpmock::Method::GET)
+            .path("/metrics")
+            .header("authorization", "Bearer server-only-token");
+        then.status(200).body(
+            "kafka_connect_source_task_source_record_poll_total{connector=\"source\",task=\"0\"} 4\n",
+        );
+    });
+    let path = std::env::temp_dir().join(format!("strimzi-metrics-{}.toml", uuid::Uuid::new_v4()));
+    std::fs::write(
+        &path,
+        format!(
+            "[[workers]]\nid = \"worker-0\"\nurl = \"{}\"\nbearer_token = \"server-only-token\"\nca_file = '{}'\n",
+            server.url("/metrics"),
+            server.ca_path().display()
+        ),
+    )
+    .unwrap();
+    let state = AppState::new(ConnectionSettings {
+        metrics_targets_file: Some(path.clone()),
+        ..ConnectionSettings::default()
+    });
+    let task = state.start_metrics().unwrap();
+    assert!(state.clone().start_metrics().is_none());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while scrape.hits() == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("shared collector must start independently of viewers");
+    let app = router(state);
+    for _ in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/monitor/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(!text.contains("server-only-token"));
+        assert!(!text.contains(&server.base_url()));
+    }
+    assert_eq!(scrape.hits(), 1, "viewers must not initiate extra scrapes");
+    task.abort();
+    std::fs::remove_file(path).unwrap();
+}
+
+#[tokio::test]
+async fn bound_rendered_metrics_across_workers_without_starting_extra_scrapes() {
+    use std::fmt::Write;
+
+    let server = TlsMockServer::start();
+    let mut body = String::new();
+    for task in 0..40 {
+        writeln!(
+            body,
+            "kafka_connect_source_task_source_record_poll_total{{connector=\"source\",task=\"{task}\"}} 4"
+        )
+        .unwrap();
+    }
+    body.push_str("kafka_connect_source_task_idle_ratio NaN\n");
+    let scrape = server.mock(|when, then| {
+        when.method(httpmock::Method::GET);
+        then.status(200).body(body);
+    });
+    let mut targets = String::new();
+    for worker in 0..9 {
+        writeln!(
+            targets,
+            "[[workers]]\nid='worker-{worker}'\nurl='{}'\nca_file='{}'",
+            server.url(&format!("/worker-{worker}")),
+            server.ca_path().display()
+        )
+        .unwrap();
+    }
+    let path = std::env::temp_dir().join(format!("strimzi-metrics-{}.toml", uuid::Uuid::new_v4()));
+    std::fs::write(&path, targets).unwrap();
+    let state = AppState::new(ConnectionSettings {
+        metrics_targets_file: Some(path.clone()),
+        ..ConnectionSettings::default()
+    });
+    let task = state.start_metrics().unwrap();
+    let app = router(state);
+    let rendered = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/monitor/metrics")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let html = String::from_utf8(bytes.to_vec()).unwrap();
+            if html.matches("<h4>").count() == 9 {
+                break html;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the worker cache must become available");
+    assert_eq!(rendered.matches("<tr><td>").count(), 200);
+    for worker in rendered.split("<section>").skip(1) {
+        assert!(worker.matches("<tr><td>").count() <= 25);
+    }
+    assert_eq!(scrape.hits(), 9);
+    task.abort();
+    std::fs::remove_file(path).unwrap();
 }

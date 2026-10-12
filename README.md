@@ -7,7 +7,7 @@ A unified platform to lint, monitor, and control Kafka Connect deployments runni
 Strimzi Ops is a comprehensive management platform for Kafka Connect, providing three core features:
 
 - **Linter** (CLI): Flexible validation of connector configurations with configurable rules
-- **Monitor** (UI): Real-time snapshot tracking via Debezium Notifications
+- **Monitor** (UI): Per-worker Connect/Debezium metrics and real-time snapshot tracking via Debezium Notifications
 - **Control** (UI): Manage existing connectors - restart/pause/resume and trigger snapshots. Connector creation is not available in the UI.
 
 This tool is designed to work with **existing Kafka Connect deployments** running on Kubernetes via Strimzi. It connects to your cluster remotely and provides a streamlined interface for managing connectors.
@@ -77,6 +77,7 @@ See [runtime pin provenance and state-preserving rollback requirements](k8s/READ
 - Rust toolchain (stable) with Cargo
 - [just](https://github.com/casey/just) — command runner (`brew install just`)
 - Docker and kubectl (Colima recommended for local k8s)
+- OpenSSL (local metrics CA, certificates and PKCS12 provisioning)
 - librdkafka (for Kafka features): `brew install librdkafka cmake pkg-config`
 - Git
 
@@ -103,7 +104,7 @@ cd strimzi-ops
 just setup
 ```
 
-Requires [just](https://github.com/casey/just), Docker, kubectl, and preferably Colima (`brew install just colima docker kubectl`).
+Requires [just](https://github.com/casey/just), Docker, kubectl, OpenSSL, and preferably Colima (`brew install just colima docker kubectl openssl`).
 First run can take 5–10 minutes. Tear down with `just destroy`.
 
 ### Option B: Connect to Existing Cluster
@@ -146,6 +147,60 @@ Run `just --list` to see all recipes. The important ones:
   just doctor             - Pods + forwards + HTTP health checks
   just lint-config <file> - Lint a connector config
 ```
+
+## Per-worker Prometheus Metrics
+
+The local stack enables **HTTPS** on Strimzi's JMX Prometheus exporter on each
+Connect pod's port 9404. `just setup` provisions/reuses a private local CA and
+server certificate with `127.0.0.1`/`localhost` SANs, installs the PKCS12/password
+in Kubernetes Secret `connect-metrics-tls`, then deploys Connect. Private keys
+and passwords remain in ignored, restrictive-permission `.local/connect-metrics-tls/`
+and the Secret; they are never embedded in manifests.
+`just port-forward-all` synchronizes only the Secret's public CA (including from
+another checkout), starts one supervised IPv4-loopback forward **per pod**, and
+atomically publishes `.local/connect-metrics.toml` with HTTPS URLs and relative
+`ca_file = "connect-metrics-tls/ca.crt"`. It refreshes all-worker membership every
+15 seconds (5-second Kubernetes API timeout), handles rollouts/scale changes, and
+keeps unhealthy workers visible as failed HTTPS port-0 targets rather than
+sampling a Service. A pre-TLS supervisor is automatically restarted.
+`just status-forwards` shows workers; `just stop-forwards` stops only tracked
+metrics processes without killing unrelated metrics-port listeners.
+
+`just sync-secrets` sets this server-side configuration:
+
+```toml
+[kafka]
+connect_url = "http://127.0.0.1:8083"
+metrics_targets_file = ".local/connect-metrics.toml"
+```
+
+`metrics_targets_file` resolves relative to the secrets file; targets are reread
+every collection. For remote exporters, use a private, owner-readable TOML file
+with one `[[workers]]` entry per worker: `id`, **HTTPS** `url`, optional
+`bearer_token`, and optional `ca_file` pointing to a PEM CA certificate relative
+to the targets TOML directory (absolute paths also work). Without `ca_file`,
+normal public trust roots apply. CA and hostname verification are always enabled;
+**all HTTP metrics URLs are rejected, including unauthenticated loopback ones**.
+Do not use a load-balanced exporter URL. Credentials/endpoints remain server-side.
+No Prometheus server or public metrics exposure is deployed. The local HTTPS
+exporter has no client authentication and remains reachable by in-cluster pods
+under Strimzi's default metrics NetworkPolicy; TLS is not an authorization boundary.
+
+Collection runs server-side with a 3-second request timeout and a 10-second
+interval **after each round**; browser refreshes use cached results. Successful
+samples are available; missing/non-finite samples, unconfigured metrics and
+empty exporters/membership are unavailable (never fabricated zeroes). A configured
+but missing/unreadable targets file is a collection error, not unconfigured metrics.
+Failures without previous data show collection error. Last good samples survive
+scrape/target-file failures as stale, and become stale after 30 seconds without
+refresh; their age is retained. Samples keep worker, connector/task and all
+Debezium server/context labels separate. Raw UI tables show at most **25 rows per
+worker and 200 total**, with truncation notices; backend samples remain complete.
+
+The local single-task PostgreSQL source uses Debezium's
+`custom.metric.tags = connector=postgres-source-connector,task=0` to preserve
+explicit identity; it is not inferred from `topic.prefix`. See
+[exporter configuration, authenticated remote file example, limits and network-policy notes](k8s/README.md#per-worker-connect-and-debezium-metrics).
 
 ## Usage
 
@@ -197,6 +252,12 @@ View an overview of all connectors, their status, and health metrics.
 
 ### Monitor (UI)
 
+The Monitor landing page shows cached metrics availability, last-good sample age,
+and expandable raw measurements for each worker. It refreshes every 10 seconds
+through `/monitor/metrics`; browser requests never start another collector.
+Metrics do not require Kafka bootstrap servers. See [metrics setup](#per-worker-prometheus-metrics)
+for exporter access, identity labels, authentication, and stale/error semantics.
+
 Track snapshot progress in real-time:
 
 1. Start the application: `just run`
@@ -240,6 +301,7 @@ Manage your connectors:
   "name": "postgres-source-connector",
   "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
   "tasks.max": 1,
+  "custom.metric.tags": "connector=postgres-source-connector,task=0",
   "database.hostname": "postgres-source",
   "database.port": 5432,
   "database.user": "postgres",
@@ -515,6 +577,7 @@ The default localhost configuration works with port-forwarding:
 [kafka]
 bootstrap_servers = "localhost:9092"
 connect_url = "http://localhost:8083"
+metrics_targets_file = ".local/connect-metrics.toml"
 ```
 
 ### Start Using

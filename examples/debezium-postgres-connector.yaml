@@ -4,6 +4,8 @@
 name: postgres-source-connector
 connector.class: io.debezium.connector.postgresql.PostgresConnector
 tasks.max: 1
+# PostgreSQL has one task; keep connector identity equal to name above.
+custom.metric.tags: connector=postgres-source-connector,task=0
 
 # Database connection
 database.hostname: postgres-source

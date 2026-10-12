@@ -19,6 +19,7 @@ pub fn router(state: AppState) -> Router {
             get(monitor::monitor).post(monitor::monitor_submit),
         )
         .route("/monitor/events", get(monitor::monitor_events))
+        .route("/monitor/metrics", get(monitor::metrics))
         .route("/control", get(control::control_list))
         .route("/control/{name}/pause", post(control::pause_connector))
         .route("/control/{name}/resume", post(control::resume_connector))

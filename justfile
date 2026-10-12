@@ -15,7 +15,7 @@
 #   8. launch Rust web UI (strimzi-ui)
 #
 # Day-to-day:
-#   just port-forward-all   # (re)start + health-check Connect :8083
+#   just port-forward-all   # (re)start services + all-worker metrics supervisor
 #   just status-forwards    # show tracked forward PIDs
 #   just ui                 # ensures forwards, then starts strimzi-ui
 #   just doctor             # pods + forwards + HTTP checks
@@ -52,6 +52,7 @@ setup: ensure-cluster build-connect deploy sync-secrets apply-connector port-for
     @echo ""
     @echo "Local stack is ready."
     @echo "  Connect API : http://127.0.0.1:8083"
+    @echo "  Metrics     : per-pod HTTPS forwards + CA in .local/connect-metrics.toml"
     @echo "  Kafka       : 127.0.0.1:9092"
     @echo "  Postgres    : 127.0.0.1:5432  (postgres / password / source_db)"
     @echo "  RustFS S3   : {{ rustfs_endpoint }}"
@@ -83,6 +84,10 @@ build-connect: ensure-buildx
 # Deploy local Kubernetes environment (Strimzi/Kafka/Postgres/RustFS/Connect)
 deploy:
     cd k8s && ./deploy.sh
+
+# Provision/reuse the local metrics TLS Secret without replacing existing identity
+provision-metrics-tls:
+    bash {{ helper }} provision-metrics-tls
 
 # Check deployment status
 status:
@@ -123,7 +128,7 @@ sync-secrets:
 apply-connector:
     bash {{ helper }} apply-connector
 
-# Start (or repair) all local port-forwards in the background; verifies Connect :8083
+# Start/repair service forwards + per-pod metrics supervisor; verifies Connect :8083
 port-forward-all:
     bash {{ helper }} port-forward-all
 

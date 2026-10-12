@@ -7,7 +7,7 @@ use axum::http::{header, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
-use strimzi_ops_core::metrics::{MetricState, STALE_AFTER};
+use strimzi_ops_core::metrics::{connector_throughput, MetricState, STALE_AFTER};
 use strimzi_ops_core::{NotificationMonitor, SnapshotTracker};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
@@ -18,7 +18,7 @@ use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
     render, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage, MonitorPage,
-    MonitorResultsPage, SnapshotCard, SnapshotCards,
+    MonitorResultsPage, SnapshotCard, SnapshotCards, ThroughputConnectorView,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -86,6 +86,10 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
     render(MetricsPanel {
         state: panel_state,
         workers,
+        throughput: connector_throughput(&cached.snapshot)
+            .into_iter()
+            .map(|connector| ThroughputConnectorView::new(connector, expired))
+            .collect(),
     })
 }
 

@@ -2,7 +2,9 @@ use askama::Template;
 use askama_web::WebTemplate;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use strimzi_ops_core::metrics::{MetricSample, MetricState};
+use strimzi_ops_core::metrics::{
+    ConnectorThroughput, MetricSample, MetricState, ThroughputStage, ThroughputValue,
+};
 
 use crate::error::Error;
 
@@ -91,11 +93,84 @@ pub struct MetricsWorkerView<'a> {
     pub omitted: usize,
 }
 
+pub struct ThroughputStageView {
+    pub label: &'static str,
+    pub rate: String,
+    pub total: String,
+}
+
+impl ThroughputStageView {
+    fn new(mut stage: ThroughputStage, expired: bool) -> Self {
+        if expired {
+            stage.rate.expire();
+            stage.total.expire();
+        }
+        Self {
+            label: stage.label,
+            rate: format_measurement(stage.rate, 2),
+            total: format_measurement(stage.total, 0),
+        }
+    }
+}
+
+fn format_measurement(measurement: ThroughputValue, precision: usize) -> String {
+    measurement.value.map_or_else(
+        || measurement.state.to_string(),
+        |value| {
+            // Never round a small but positive rate into apparent inactivity.
+            if precision == 2 && value > 0.0 && value < 0.01 {
+                format!("{value:.2e} ({})", measurement.state)
+            } else {
+                format!("{value:.precision$} ({})", measurement.state)
+            }
+        },
+    )
+}
+
+pub struct ThroughputTaskView {
+    pub task: String,
+    pub worker: String,
+    pub stages: Vec<ThroughputStageView>,
+}
+
+pub struct ThroughputConnectorView {
+    pub connector: String,
+    pub stages: Vec<ThroughputStageView>,
+    pub tasks: Vec<ThroughputTaskView>,
+}
+
+impl ThroughputConnectorView {
+    pub fn new(connector: ConnectorThroughput, expired: bool) -> Self {
+        Self {
+            connector: connector.connector,
+            stages: connector
+                .stages
+                .into_iter()
+                .map(|stage| ThroughputStageView::new(stage, expired))
+                .collect(),
+            tasks: connector
+                .tasks
+                .into_iter()
+                .map(|task| ThroughputTaskView {
+                    task: task.task,
+                    worker: task.worker,
+                    stages: task
+                        .stages
+                        .into_iter()
+                        .map(|stage| ThroughputStageView::new(stage, expired))
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub struct MetricsPanel<'a> {
     pub state: MetricState,
     pub workers: Vec<MetricsWorkerView<'a>>,
+    pub throughput: Vec<ThroughputConnectorView>,
 }
 
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@
 {% block content %}
 <section id="monitor-session" data-topic="{{ topic }}" data-duration="{{ duration }}">
   <h2 id="monitor-heading">Live Snapshot Monitoring</h2>
-  <p class="lede">Topic <code>{{ topic }}</code> for {{ duration }} seconds</p>
+  <p class="lede">Notifications from topic <code>{{ topic }}</code> plus independent snapshot metrics for {{ duration }} seconds. Stop retains the last observations.</p>
   <p id="monitor-status" role="status" aria-live="polite">Connecting to the notification stream…</p>
   <div id="monitor-error" class="error" role="alert" hidden></div>
   <div id="snapshot-results" aria-live="polite">

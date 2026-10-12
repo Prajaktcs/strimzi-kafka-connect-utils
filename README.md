@@ -299,7 +299,21 @@ available. Metrics do not require Kafka bootstrap servers. See
 [metrics setup](#per-worker-prometheus-metrics) and the
 [real source/sink throughput smoke check](k8s/README.md#throughput-semantics-and-local-smoke-check).
 
-Track snapshot progress in real-time:
+Monitor also shows supported **Debezium snapshot measurements**: running,
+completed, aborted, paused/skipped flags, elapsed seconds, total/remaining table
+counts, per-table rows scanned and cumulative snapshot events. Every reading
+preserves the tagged connector/task/worker/domain/server/exporter context.
+Missing measurements are unavailable, never zero; stale values are explicitly
+last observed. No row-count percentage is invented when the total is unknown.
+
+The installed PostgreSQL connector shares its native `snapshot` metric context
+between initial and incremental snapshots. The UI does not infer the snapshot
+kind or a new run from that context. Row-map entries and event counters can
+outlive a run and are labeled retained/historical, not a new snapshot's progress.
+See [snapshot measurements and source reconciliation](k8s/README.md#debezium-snapshot-measurements-and-notifications)
+for supported attributes, identity limitations and browser smoke evidence.
+
+Track snapshot lifecycle and measurements in a timed live session:
 
 1. Start the application: `just run`
 2. Navigate to the **Monitor** page
@@ -307,14 +321,27 @@ Track snapshot progress in real-time:
 4. Set monitoring duration (10–300 seconds)
 5. Click **Start Monitoring**
 
-The page opens immediately and streams snapshot status and progress over Server-Sent Events (SSE) during the selected duration. Each viewer has an independent Kafka consumer, so simultaneous sessions receive the same notifications rather than splitting them.
+The page opens immediately and streams notification events **and cached snapshot
+metrics** over Server-Sent Events (SSE) during the selected duration. Each viewer
+has an independent Kafka consumer, so simultaneous sessions do not split
+notifications. Metrics still use the one application-wide collector.
 
 UI viewer groups disable automatic offset storage and commits, so repeated
 sessions do not retain Kafka offset records. The CLI's named monitor groups
-keep their existing commit behavior. A snapshot event confirms that the stream
-is listening even when latest-value delivery coalesces the earlier status event.
+keep their existing commit behavior. Native `aggregate_type` distinguishes
+initial/incremental notification contexts; `additional_data.connector_name`
+identifies the logical source (`topic.prefix` for PostgreSQL), not necessarily
+the Connect REST name. The last 20 accepted wire events per source/context remain
+expandable, including collection/table/chunk events and terminal events received
+without `STARTED`. Unknown row totals produce no progress bar.
 
-Click **Stop Monitoring** to end a session early; navigating away also releases its consumer. At the deadline, the stream closes and the final cards remain visible. Consumer or connection failures are shown on the page without automatically restarting the session. Sessions start from new notifications and do not persist history. Live monitoring requires JavaScript.
+Click **Stop Monitoring** to end a session early; navigating away also releases
+its consumer. At the deadline, updates stop and the final observations remain
+visible. A notification-consumer failure is shown alongside metrics and does
+**not** terminate metric updates before the deadline. An SSE connection failure
+ends the session without automatic reconnection; retained observations remain.
+Sessions start from new notifications, retain only bounded in-session event
+history, and require JavaScript.
 
 Kafka's advertised broker addresses must be reachable from the UI process. Forwarding only the bootstrap port is insufficient if Kafka advertises cluster-only DNS names.
 

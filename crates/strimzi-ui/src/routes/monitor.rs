@@ -19,8 +19,8 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    render, streaming_views, throughput_views, HtmlResult, MetricsPanel, MetricsWorkerView,
-    MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCard, SnapshotCards,
+    render, snapshot_metrics, streaming_views, throughput_views, HtmlResult, MetricsPanel,
+    MetricsWorkerView, MissingBootstrapPage, MonitorPage, MonitorResultsPage, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -103,6 +103,7 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         throughput_omitted,
         streaming,
         streaming_omitted,
+        snapshot_metrics: snapshot_metrics(&cached, None),
     })
 }
 
@@ -165,9 +166,10 @@ pub async fn monitor_events(
     );
     let worker_sender = sender.clone();
     tokio::spawn(async move {
-        if let Err(err) =
-            spawn_blocking(move || run_monitor_session(bootstrap, topic, duration, &worker_sender))
-                .await
+        if let Err(err) = spawn_blocking(move || {
+            run_monitor_session(state, bootstrap, topic, duration, &worker_sender)
+        })
+        .await
         {
             let _ = sender.send_replace(
                 Event::default()
@@ -188,6 +190,7 @@ pub async fn monitor_events(
 }
 
 fn run_monitor_session(
+    state: AppState,
     bootstrap: String,
     topic: String,
     duration_secs: u64,
@@ -196,53 +199,69 @@ fn run_monitor_session(
     if sender.is_closed() {
         return Ok(());
     }
-    let mut monitor = NotificationMonitor::new(bootstrap, topic);
-    let group = format!("strimzi-ops-monitor-{}", uuid::Uuid::new_v4());
-    monitor.start_ephemeral(&group)?;
-    let _ = sender.send_replace(Event::default().event("listening").data("Listening"));
-    let mut tracker = SnapshotTracker::new();
     let started = Instant::now();
     let duration = Duration::from_secs(duration_secs);
+    let mut monitor = NotificationMonitor::new(bootstrap, topic);
+    let group = format!("strimzi-ops-monitor-{}", uuid::Uuid::new_v4());
+    let mut notification_error = monitor
+        .start_ephemeral(&group)
+        .err()
+        .map(|err| err.to_string());
+    let mut monitor = notification_error.is_none().then_some(monitor);
+    let mut tracker = SnapshotTracker::new();
+    let mut last_metrics = None;
 
     while !sender.is_closed() {
         let remaining = duration.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             break;
         }
-        if let Some(notification) = monitor.poll(remaining.min(Duration::from_millis(250)))? {
-            tracker.process_notification(&notification);
-            let _ = sender.send_replace(snapshot_event(&tracker)?);
+        let wait = remaining.min(Duration::from_millis(250));
+        let mut changed = false;
+        if let Some(consumer) = monitor.as_mut() {
+            match consumer.poll(wait) {
+                Ok(Some(notification)) => {
+                    tracker.process_notification(&notification);
+                    changed = true;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    notification_error = Some(err.to_string());
+                    monitor = None;
+                    changed = true;
+                }
+            }
+        } else {
+            std::thread::sleep(wait);
+        }
+        let cached = state.metrics_snapshot();
+        let metrics_version = (cached.received, cached.received.elapsed() >= STALE_AFTER);
+        if changed || last_metrics != Some(metrics_version) {
+            let _ = sender.send_replace(Event::default().event("snapshots").data(snapshot_html(
+                &tracker,
+                &cached,
+                notification_error.as_deref(),
+            )?));
+            last_metrics = Some(metrics_version);
         }
     }
-    // Dropping the monitor also releases the consumer on errors/disconnects.
+    // Dropping the consumer releases it on stop, error, deadline, or disconnect.
     if !sender.is_closed() {
-        let _ = sender.send_replace(
-            Event::default()
-                .event("complete")
-                .data(snapshot_html(&tracker)?),
-        );
+        let _ = sender.send_replace(Event::default().event("complete").data(snapshot_html(
+            &tracker,
+            &state.metrics_snapshot(),
+            notification_error.as_deref(),
+        )?));
     }
     Ok(())
 }
 
-fn snapshot_event(tracker: &SnapshotTracker) -> crate::result::Result<Event> {
-    Ok(Event::default()
-        .event("snapshots")
-        .data(snapshot_html(tracker)?))
-}
-
-fn snapshot_html(tracker: &SnapshotTracker) -> crate::result::Result<String> {
-    let mut cards: Vec<SnapshotCard<'_>> = tracker
-        .get_all_snapshots()
-        .iter()
-        .map(|(name, state)| SnapshotCard {
-            name,
-            status: &state.status,
-            progress: state.progress.min(100),
-        })
-        .collect();
-    cards.sort_unstable_by(|a, b| a.name.cmp(b.name));
-    SnapshotCards { snapshots: cards }
+fn snapshot_html(
+    tracker: &SnapshotTracker,
+    cached: &crate::metrics::CachedMetrics,
+    notification_error: Option<&str>,
+) -> crate::result::Result<String> {
+    SnapshotCards::new(tracker, cached, notification_error)
         .render()
         .map_err(|err| Error::Internal {
             reason: err.to_string(),

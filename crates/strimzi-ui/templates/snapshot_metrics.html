@@ -1,0 +1,32 @@
+<section aria-label="Debezium snapshot measurements">
+  <h3>Snapshot metrics</h3>
+  <p role="status">Snapshot collection: <strong>{{ snapshot_metrics.state }}</strong>. Measurements refresh from the shared worker cache; stale values are historical, not live.</p>
+  <p>Exporter context <code>snapshot</code> is shared by initial and incremental snapshots in the installed PostgreSQL connector. Explicit <code>incremental-snapshot</code> contexts remain separate when exported. Metrics have no notification run ID: matching connector names alone does not establish the same snapshot run.</p>
+  <p>Duration and table counts describe the exporter's retained lifecycle, not necessarily the newest notification. Row counts and event totals below are <strong>reported historical/cumulative values, not a new snapshot's progress</strong>. Retained table entries can belong to earlier runs; unknown row totals never produce a percentage.</p>
+  {% if snapshot_metrics.rows.is_empty() %}
+  <p class="notice">No identifiable snapshot measurements available. Notification events remain visible independently. Check the metrics targets and explicit connector/task tags.</p>
+  {% endif %}
+  {% if snapshot_metrics.omitted > 0 %}<p class="notice">{{ snapshot_metrics.omitted }} additional snapshot identities are not displayed (200-row limit).</p>{% endif %}
+  {% if snapshot_metrics.tables_omitted > 0 %}<p class="notice">{{ snapshot_metrics.tables_omitted }} additional table readings are not displayed (200-table limit across displayed identities).</p>{% endif %}
+  {% for row in snapshot_metrics.rows %}
+  <section class="snapshot-metrics" aria-label="Snapshot metrics for {{ row.connector }}">
+    <h4>{{ row.connector }} — exporter context: {{ row.context }}</h4>
+    <p>Task {{ row.task }} · worker {{ row.worker }} · domain {{ row.domain }} · server {{ row.server }} · last successful collection age: {{ row.age }}</p>
+    <p class="notice">Source comparison: {{ row.comparison }}</p>
+    <div class="table-wrap"><table>
+      <caption>Snapshot lifecycle flags and retained measurements</caption>
+      <thead><tr><th>Running</th><th>Completed</th><th>Aborted</th><th>Paused</th><th>Skipped</th><th>Duration (s)</th><th>Total tables</th><th>Remaining tables</th><th>Snapshot events (cumulative)</th></tr></thead>
+      <tbody><tr><td>{{ row.running }}</td><td>{{ row.completed }}</td><td>{{ row.aborted }}</td><td>{{ row.paused }}</td><td>{{ row.skipped }}</td><td>{{ row.duration }}</td><td>{{ row.total_tables }}</td><td>{{ row.remaining_tables }}</td><td>{{ row.events }}</td></tr></tbody>
+    </table></div>
+    {% if row.tables.is_empty() %}
+    <p>Table rows scanned: unavailable (no per-table reading exported; not zero).</p>
+    {% else %}
+    <div class="table-wrap"><table>
+      <caption>Reported table rows scanned — retained observations, run association unavailable</caption>
+      <thead><tr><th>Table</th><th>Rows scanned</th></tr></thead>
+      <tbody>{% for table in row.tables %}<tr><td>{{ table.table }}</td><td>{{ table.rows }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+    {% endif %}
+  </section>
+  {% endfor %}
+</section>

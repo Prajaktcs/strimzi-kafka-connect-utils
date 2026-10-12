@@ -660,6 +660,128 @@ Snapshot tracker/session regression tests passed; successful live notification
 consumption was not established by this smoke check.
 
 
+### Debezium Snapshot Measurements and Notifications
+
+Both the Monitor landing page and timed SSE sessions project supported snapshot
+measurements from the **same shared worker cache**. No extra scraper or browser
+consumer is created for metrics. Availability is independent for each attribute:
+
+| UI measurement | Native attribute / exported suffix | Meaning |
+| --- | --- | --- |
+| Running / completed / aborted | `SnapshotRunning`, `SnapshotCompleted`, `SnapshotAborted` / `_snapshot_running`, `_snapshot_completed`, `_snapshot_aborted` | Explicit Boolean flags; only 0 or 1 is accepted. |
+| Paused / skipped | `SnapshotPaused`, `SnapshotSkipped` / `_snapshot_paused`, `_snapshot_skipped` | Native flags, not inferred from notification silence. |
+| Duration (s) | `SnapshotDurationInSeconds` / `_snapshot_duration_in_seconds` | Exporter's retained lifecycle duration; not a browser stopwatch or proof of the newest notification run. |
+| Total / remaining tables | `TotalTableCount`, `RemainingTableCount` / `_total_table_count`, `_remaining_table_count` | Exported table inventory; not a row-total estimate or row percentage. |
+| Reported table rows scanned | `RowsScanned` / `_rows_scanned` plus `table` label | Historical reported map entries; absent entries are unavailable, not zero. |
+| Snapshot events (cumulative) | `TotalNumberOfEventsSeen` / `_total_number_of_events_seen_total` | Snapshot-context event total since exporter lifecycle/reset, not current-run progress or durable Kafka delivery. |
+
+Actual PostgreSQL metric names use the `debezium_postgres` prefix. Other domains
+are projected only when the matching attributes are actually exported. Every
+scalar requires nonempty `connector`, `task`, `server` and `context` labels;
+per-table rows additionally require `table`. Worker and Debezium domain remain
+separate. No counts are summed across tables/tasks/workers/contexts. Unsupported
+extra dimensions, duplicate series/ownership, nonfinite/negative numbers and
+nonboolean flags are unavailable rather than an arbitrary or fabricated value.
+Display is bounded independently to **200 identities and 200 table rows across
+displayed identities**, with omitted counts; projection uses the complete cache.
+
+The `RowsScanned`-specific exporter rule precedes the generic attribute rule.
+The MXBean map becomes `TabularData(key,value)`; JMX Exporter 1.6.0 appends
+`key=<table>` to bean properties while retaining the `RowsScanned` attribute.
+The rule captures that key as `table` instead of collapsing different tables
+into indistinguishable series. Apply the updated exporter ConfigMap, allow
+Strimzi reconciliation and mounted-config propagation, and use the existing
+state-preserving rolling-update procedure above if the worker needs a restart.
+Verify the resulting HTTPS scrape has the table label; an empty native map
+legitimately exports no row samples.
+
+#### Context, Run Identity and Source Disagreement
+
+- The installed **Debezium 3.7.0.Final PostgreSQL** pipeline supplies the same
+  native `context="snapshot"` meter to initial **and incremental** snapshots.
+  This context is shown literally and marked shared; it is **not initial-only**.
+  An explicit `incremental-snapshot` context remains separate when an exporter
+  actually provides it. Streaming measurements never supply snapshot values.
+- Native `SnapshotMeter.snapshotStarted()` resets lifecycle flags/timing but
+  **does not clear its row map or captured-table inventory**; only `reset()`
+  clears those values. Event counters can also outlive a run. Table rows and
+  cumulative events are always labeled retained/historical, never attributed
+  to a new notification or converted into a percentage.
+- Notifications use native `aggregate_type="Initial Snapshot"` or
+  `"Incremental Snapshot"` and retain separate `initial-snapshot` /
+  `incremental-snapshot` cards. `additional_data.connector_name` is Debezium's
+  **logical source name**, which can differ from the KafkaConnector/REST name.
+  For example, the supplied source reports `lakehouse`; its tagged metric
+  connector remains `postgres-source-connector`. These names are not conflated.
+- For an explicitly separate incremental metric context, comparison matches the
+  notification logical source to the exported `server`. Multiple connector/task/
+  worker/domain identities claiming that source/context make association
+  ambiguous. A complete fresh flag set can show consistent or different
+  observations; **even agreement does not establish the same run**. Initial
+  notification IDs identify individual events, and incremental IDs have native
+  concurrency limitations. Shared `snapshot` context always reports run
+  association unavailable rather than overwriting either source.
+- Metrics are sampled, so a terminal notification can arrive before the next
+  completed metric scrape. Both observations remain visible. Missing metrics do
+  not hide notifications; missing/failed notifications do not hide metrics.
+  A failed scrape retains last-good measurements as **stale**; a cache older
+  than 30 seconds also expires readings. Every stale flag/value is last observed,
+  not live. A first collection failure contains no numeric measurements.
+- Timed sessions retain the latest lifecycle plus the last 20 accepted wire
+  events per logical source/context. Collection/table/chunk events do not
+  replace lifecycle status. Terminal events are visible even without `STARTED`;
+  newer starts clear old run timing/progress, and older timestamped events do
+  not rewind lifecycle state. No history is persisted across sessions.
+- Stop, deadline, navigation and SSE disconnect end the viewer's subscription;
+  the application-wide metric collector remains independent. Notification poll
+  errors stop only that consumer while cached metrics continue to the deadline.
+  SSE transport failures do not automatically reconnect.
+
+#### Real Snapshot Browser Smoke
+
+Issue #21 used a dedicated KafkaConnector, replication slot/publication, a
+1,500-row PostgreSQL table and a source signaling table; no existing offsets or
+data were reset. A slow initial snapshot updated one open timed Monitor document:
+running became true, duration advanced **3 → 13 → 61 seconds**, total/remaining
+tables went **1/1 → 1/0**, completed became true, and the actual table-labeled
+rows/event readings reached **1,500**. No percentage/progress bar was displayed.
+
+Real incremental signals subsequently produced independent incremental
+notification lifecycle cards, alongside the retained initial `SKIPPED` card.
+The shared native metric context remained `snapshot`; an intermediate cached
+metric observation still showed running/1,200 scanned rows after the completed
+notification arrived, without treating either source as the authoritative
+replacement. Two incremental snapshots left **3,000 cumulative events** versus
+**1,500 reported table rows**, explicitly not a new-run percentage.
+
+A separate UI with an unreachable HTTPS target displayed real incremental
+`COMPLETED` notifications while snapshot collection remained **collection error**
+with no fabricated numbers. On the healthy UI, an isolated target failure showed
+last-observed/stale flags and counts without hiding notifications; restoring the
+target recovered in the same document. Conversely, the host's unresolved
+advertised Kafka DNS produced a visible notification error while the real initial
+snapshot continued updating via metrics.
+
+Successful notification smoke used a **temporary QA-only loopback metadata
+relay** to make the existing forwarded broker's advertised addresses reachable;
+no broker/listener/DNS configuration or application transport behavior was
+changed. A separate temporary HTTP relay exercised a genuine SSE transport
+disconnect. Stop and 10-second deadline retained final observations; disconnect
+disabled Stop, retained metric rows and did not reconnect. Broker group
+inspection showed zero members after these sessions. Long raw notification
+payloads were browser-checked without horizontal page overflow.
+Smoke-only connectors/tables/topics/slots/publications, relays, UI processes and
+temporary configs were removed after verification. Existing private forwards
+and the updated exporter configuration were retained.
+
+Snapshot definitions:
+- [Debezium 3.7 native snapshot attribute contract](https://github.com/debezium/debezium/blob/v3.7.0.Final/debezium-connector-common/src/main/java/io/debezium/pipeline/metrics/traits/SnapshotMetricsMXBean.java).
+- [Native snapshot-meter lifetime/reset semantics](https://github.com/debezium/debezium/blob/v3.7.0.Final/debezium-connector-common/src/main/java/io/debezium/pipeline/meters/SnapshotMeter.java).
+- [Shared incremental snapshot listeners](https://github.com/debezium/debezium/blob/v3.7.0.Final/debezium-connector-common/src/main/java/io/debezium/pipeline/ChangeEventSourceCoordinator.java#L374-L375).
+- [Native notification format and lifecycle](https://debezium.io/documentation/reference/3.7/configuration/notification.html).
+- [Initial notification logical-name identity](https://github.com/debezium/debezium/blob/v3.7.0.Final/debezium-connector-common/src/main/java/io/debezium/pipeline/notification/InitialSnapshotNotificationService.java).
+- [JMX Exporter 1.6.0 map flattening](https://github.com/prometheus/jmx_exporter/blob/1.6.0/collector/src/main/java/io/prometheus/jmx/JmxScraper.java#L520-L601).
+
 Primary configuration references:
 - [Strimzi 1.2.0 Kafka Connect exporter example](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/examples/metrics/kafka-connect-metrics.yaml).
 - [JMX Exporter 1.6.0 rule input, ordering, labels and snake-case semantics](https://prometheus.github.io/jmx_exporter/1.6.0/configuration/rules/).

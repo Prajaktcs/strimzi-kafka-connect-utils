@@ -391,9 +391,28 @@ fn monitor_command(
                 }
             } else {
                 tracker.process_notification(&notification);
-                if let Some(connector) = notification.get("aggregateType").and_then(Value::as_str) {
-                    if let Some(state) = tracker.get_snapshot_status(connector) {
-                        println!("{connector}: {} ({}%)", state.status, state.progress);
+                let connector = notification
+                    .pointer("/additional_data/connector_name")
+                    .and_then(Value::as_str);
+                let context = match notification.get("aggregate_type").and_then(Value::as_str) {
+                    Some("Initial Snapshot") => Some("initial-snapshot"),
+                    Some("Incremental Snapshot") => Some("incremental-snapshot"),
+                    _ => None,
+                };
+                if let (Some(connector), Some(context)) = (connector, context) {
+                    if let Some(state) = tracker
+                        .get_snapshot_status(connector, context)
+                        .filter(|state| state.notification == notification)
+                    {
+                        let event = state.notification.get("type").and_then(Value::as_str);
+                        print!("{connector} ({context}): {}", state.status);
+                        if let Some(progress) = state.progress {
+                            print!(" ({progress}%)");
+                        }
+                        if let Some(event) = event.filter(|event| *event != state.status) {
+                            print!("; last event: {event}");
+                        }
+                        println!();
                     }
                 }
             }

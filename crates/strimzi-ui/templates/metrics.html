@@ -6,6 +6,7 @@
 <p class="notice">Metrics unavailable. Configure <code>kafka.metrics_targets_file</code> in server-side secrets and start <code>just port-forward-all</code>.</p>
 {% endif %}
 {% endif %}
+{% include "snapshot_metrics.html" %}
 <h4>Connector throughput</h4>
 <p>Records/sec uses Kafka Connect's native rolling task rates, not counter differences. Connector rates are sums, never averages. Totals are current task-lifetime counters and can decrease after restarts or reassignment.</p>
 <p>Source written means records written to Kafka. Sink read means records read from Kafka; sink sent means records passed to the sink plugin, <strong>not durable downstream commits</strong>.</p>

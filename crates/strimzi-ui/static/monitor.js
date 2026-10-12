@@ -20,12 +20,8 @@
     stop.disabled = true;
   }
 
-  source.addEventListener("listening", () => {
-    status.textContent = "Listening for snapshot notifications…";
-  });
   source.addEventListener("snapshots", (event) => {
-    // Latest-value delivery may coalesce the earlier listening event.
-    status.textContent = "Listening for snapshot notifications…";
+    status.textContent = "Monitoring snapshot notifications and metrics…";
     // HTML is rendered and escaped by the server's Askama template.
     results.innerHTML = event.data;
   });

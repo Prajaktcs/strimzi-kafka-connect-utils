@@ -9,6 +9,9 @@ use strimzi_ops_core::metrics::{
 
 use crate::error::Error;
 
+mod snapshots;
+pub(crate) use snapshots::{snapshot_metrics, SnapshotCards, SnapshotMetricsPanel};
+
 pub type HtmlResult = std::result::Result<Response, Error>;
 
 impl IntoResponse for Error {
@@ -64,25 +67,12 @@ pub struct MonitorPage {
     pub has_bootstrap: bool,
 }
 
-#[derive(Debug)]
-pub struct SnapshotCard<'a> {
-    pub name: &'a str,
-    pub status: &'a str,
-    pub progress: u64,
-}
-
 #[derive(Template, WebTemplate)]
 #[template(path = "monitor_results.html")]
 pub struct MonitorResultsPage {
     pub active: &'static str,
     pub topic: String,
     pub duration: u64,
-}
-
-#[derive(Template)]
-#[template(path = "snapshot_cards.html")]
-pub struct SnapshotCards<'a> {
-    pub snapshots: Vec<SnapshotCard<'a>>,
 }
 
 pub struct MetricsWorkerView<'a> {
@@ -316,6 +306,7 @@ pub struct MetricsPanel<'a> {
     pub throughput_omitted: usize,
     pub streaming: Vec<DebeziumStreamingView>,
     pub streaming_omitted: usize,
+    pub snapshot_metrics: SnapshotMetricsPanel,
 }
 
 #[derive(Debug, Clone)]

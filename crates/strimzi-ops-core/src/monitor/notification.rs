@@ -40,7 +40,13 @@ impl NotificationMonitor {
 
     /// Start consuming notifications with the given consumer group.
     pub fn start(&mut self, group_id: &str) -> Result<()> {
-        self.start_inner(group_id)
+        self.start_inner(group_id, true)
+    }
+
+    /// Start a transient viewer without storing or committing Kafka offsets.
+    /// Dropping the consumer releases the group without retained offset records.
+    pub fn start_ephemeral(&mut self, group_id: &str) -> Result<()> {
+        self.start_inner(group_id, false)
     }
 
     /// Stop consuming notifications.
@@ -85,7 +91,7 @@ impl NotificationMonitor {
     }
 
     #[cfg(feature = "kafka")]
-    fn start_inner(&mut self, group_id: &str) -> Result<()> {
+    fn start_inner(&mut self, group_id: &str, commit_offsets: bool) -> Result<()> {
         use rdkafka::config::ClientConfig;
         use rdkafka::consumer::{BaseConsumer, Consumer};
 
@@ -93,7 +99,14 @@ impl NotificationMonitor {
             .set("bootstrap.servers", &self.bootstrap_servers)
             .set("group.id", group_id)
             .set("auto.offset.reset", "latest")
-            .set("enable.auto.commit", "true")
+            .set(
+                "enable.auto.commit",
+                if commit_offsets { "true" } else { "false" },
+            )
+            .set(
+                "enable.auto.offset.store",
+                if commit_offsets { "true" } else { "false" },
+            )
             .create()
             .map_err(|source| Error::Kafka {
                 reason: format!("cannot create consumer: {source}"),
@@ -108,7 +121,7 @@ impl NotificationMonitor {
     }
 
     #[cfg(not(feature = "kafka"))]
-    fn start_inner(&mut self, _group_id: &str) -> Result<()> {
+    fn start_inner(&mut self, _group_id: &str, _commit_offsets: bool) -> Result<()> {
         let _ = &self.bootstrap_servers;
         Err(Error::KafkaFeatureDisabled)
     }

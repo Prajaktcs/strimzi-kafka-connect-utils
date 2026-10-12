@@ -59,10 +59,10 @@ pub struct MonitorPage {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct SnapshotCard {
-    pub name: String,
-    pub status: String,
+#[derive(Debug)]
+pub struct SnapshotCard<'a> {
+    pub name: &'a str,
+    pub status: &'a str,
     pub progress: u64,
 }
 
@@ -72,7 +72,12 @@ pub struct MonitorResultsPage {
     pub active: &'static str,
     pub topic: String,
     pub duration: u64,
-    pub snapshots: Vec<SnapshotCard>,
+}
+
+#[derive(Template)]
+#[template(path = "snapshot_cards.html")]
+pub struct SnapshotCards<'a> {
+    pub snapshots: Vec<SnapshotCard<'a>>,
 }
 
 #[derive(Debug, Clone)]

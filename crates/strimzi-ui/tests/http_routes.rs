@@ -1,53 +1,83 @@
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use strimzi_ops_core::ConnectionSettings;
 use strimzi_ui::{router, AppState};
+use tokio_stream::StreamExt;
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn monitor_requires_bootstrap_servers() {
-    let state = AppState::new(ConnectionSettings::default());
-    let app = router(state);
+async fn reject_monitor_stream_without_bootstrap_servers() {
+    let app = router(AppState::new(ConnectionSettings::default()));
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/monitor")
+                .uri("/monitor/events?topic=notifications&duration=10")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
-        .await
-        .unwrap();
-    let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("Bootstrap servers required"));
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
-async fn monitor_form_renders_with_bootstrap() {
-    let state = AppState::new(ConnectionSettings {
+async fn reject_monitor_stream_with_blank_topic() {
+    let app = router(AppState::new(ConnectionSettings {
         bootstrap_servers: Some("localhost:9092".to_owned()),
         ..ConnectionSettings::default()
-    });
-    let app = router(state);
+    }));
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/monitor")
+                .uri("/monitor/events?topic=%20%20&duration=10")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn dispatch_monitor_status_before_the_session_deadline() {
+    let app = router(AppState::new(ConnectionSettings {
+        bootstrap_servers: Some("127.0.0.1:1".to_owned()),
+        ..ConnectionSettings::default()
+    }));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/monitor/events?topic=notifications&duration=300")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+    assert_eq!(response.headers()["content-type"], "text/event-stream");
+
+    let mut stream = response.into_body().into_data_stream();
+    let frame = tokio::time::timeout(Duration::from_secs(1), stream.next())
         .await
+        .expect("status must arrive before the monitoring window ends")
+        .expect("stream must emit status")
         .unwrap();
-    let text = String::from_utf8(body.to_vec()).unwrap();
-    assert!(text.contains("Start Monitoring"));
-    assert!(text.contains("debezium.notifications"));
+    let text = std::str::from_utf8(&frame).unwrap();
+    let event = text
+        .lines()
+        .find_map(|line| line.strip_prefix("event: "))
+        .expect("named SSE event");
+    assert!(matches!(
+        event,
+        "connecting" | "listening" | "monitor-error"
+    ));
+    // EventSource discards frames without nonempty data, even with an event name.
+    assert!(text.lines().any(|line| line
+        .strip_prefix("data: ")
+        .is_some_and(|data| !data.is_empty())));
+    drop(stream);
 }
 
 #[tokio::test]

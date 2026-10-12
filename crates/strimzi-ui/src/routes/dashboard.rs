@@ -6,9 +6,10 @@ use crate::blocking::with_connect_client;
 use crate::state::AppState;
 use crate::views::{
     render, ConnectorSummary, DashboardMetrics, DashboardPage, FailedItem, HtmlResult,
-    MissingConfigPage, StatusCount,
+    MissingConfigPage, ProcessingErrorRow, ProcessingErrorsPanel, StatusCount,
 };
 use std::collections::BTreeMap;
+use strimzi_ops_core::metrics::{FailureCounter, FailuresReport, MetricState, STALE_AFTER};
 
 #[derive(Debug, Deserialize)]
 pub struct FlashQuery {
@@ -27,14 +28,17 @@ pub async fn dashboard(
 
     let url = state.require_connect_url()?;
     let flash = query.flash;
-    let page = with_connect_client(url, move |client| build_dashboard(client, flash)).await?;
+    let (mut page, dlq_configured) =
+        with_connect_client(url, move |client| build_dashboard(client, flash)).await?;
+    // Pure cache reads: browsers never trigger collection or REST retries.
+    page.processing_errors = processing_errors_panel(&state.metrics_snapshot(), &dlq_configured);
     render(page)
 }
 
 fn build_dashboard(
     client: &strimzi_ops_core::ConnectClient,
     flash: Option<String>,
-) -> crate::result::Result<DashboardPage> {
+) -> crate::result::Result<(DashboardPage, BTreeMap<String, Option<bool>>)> {
     let cluster = client.get_cluster_info()?;
     let plugins = client.get_connector_plugins()?;
     let all = client.get_all_connectors_status()?;
@@ -105,7 +109,14 @@ fn build_dashboard(
 
     connectors.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(DashboardPage {
+    // Expanded connector info already contains config; never expose the
+    // dead-letter topic or make one additional REST request per connector.
+    let dlq_configured = all
+        .iter()
+        .map(|(name, info)| (name.clone(), dlq_configuration(info)))
+        .collect();
+
+    let page = DashboardPage {
         active: "dashboard",
         version: cluster.version.unwrap_or_else(|| "Unknown".to_owned()),
         kafka_cluster_id: cluster
@@ -119,6 +130,7 @@ fn build_dashboard(
             running_tasks,
             total_tasks,
         },
+        processing_errors: ProcessingErrorsPanel::default(),
         status_distribution: status_map
             .into_iter()
             .map(|(state, count)| StatusCount { state, count })
@@ -126,7 +138,89 @@ fn build_dashboard(
         failures,
         connectors,
         flash,
-    })
+    };
+    Ok((page, dlq_configured))
+}
+
+fn dlq_configuration(info: &Value) -> Option<bool> {
+    let connector_type = info.pointer("/info/type").and_then(Value::as_str)?;
+    if connector_type != "sink" {
+        return Some(false);
+    }
+    let config = info.pointer("/info/config").and_then(Value::as_object)?;
+    Some(
+        config
+            .get("errors.deadletterqueue.topic.name")
+            .and_then(Value::as_str)
+            .is_some_and(|topic| !topic.trim().is_empty()),
+    )
+}
+
+/// Exporter-derived processing errors read from the shared cache. Counts are
+/// cumulative exporter counters; rates span consecutive available collections.
+/// Collection failures surface as unavailable values, never as connector
+/// failures, and rows require a live metric series.
+fn processing_errors_panel(
+    cached: &crate::metrics::CachedMetrics,
+    dlq_configured: &BTreeMap<String, Option<bool>>,
+) -> ProcessingErrorsPanel {
+    let expired = cached.received.elapsed() >= STALE_AFTER;
+    let interval = cached
+        .previous
+        .as_ref()
+        .map(|previous| cached.received.duration_since(previous.received));
+    let previous_snapshot = cached
+        .previous
+        .as_ref()
+        .map(|previous| previous.snapshot.as_ref());
+    let report = FailuresReport::build(previous_snapshot, &cached.snapshot, interval);
+    let state = if expired && report.state == MetricState::Available {
+        MetricState::Stale
+    } else {
+        report.state
+    };
+    let rows = report
+        .tasks
+        .into_iter()
+        .map(|task| {
+            let state = if expired && task.state == MetricState::Available {
+                MetricState::Stale
+            } else {
+                task.state
+            };
+            let dlq_configured = dlq_configured.get(&task.connector).copied().flatten();
+            ProcessingErrorRow {
+                worker: task.worker,
+                connector: task.connector,
+                task: task.task,
+                state,
+                counter_reset: task.counter_reset,
+                record_errors: rounded(task.record_errors, state),
+                record_failures: rounded(task.record_failures, state),
+                retries: rounded(task.retries, state),
+                records_skipped: rounded(task.records_skipped, state),
+                errors_logged: rounded(task.errors_logged, state),
+                dlq_writes: rounded(task.dlq_writes, state),
+                dlq_failures: rounded(task.dlq_failures, state),
+                dlq_configured,
+                last_error_epoch: task.last_error_epoch,
+            }
+        })
+        .collect();
+    ProcessingErrorsPanel {
+        state: Some(state),
+        rows,
+    }
+}
+
+fn rounded(counter: FailureCounter, state: MetricState) -> FailureCounter {
+    FailureCounter {
+        count: counter.count,
+        rate_per_sec: counter
+            .rate_per_sec
+            .filter(|_| state == MetricState::Available)
+            .map(|rate| (rate * 100.0).round() / 100.0),
+    }
 }
 
 fn truncate_error(trace: Option<&str>) -> String {
@@ -140,47 +234,128 @@ fn truncate_error(trace: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use askama::Template;
     use serde_json::json;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use strimzi_ops_core::metrics::{MetricSample, MetricsSnapshot, WorkerMetrics};
 
     use super::*;
 
+    fn snapshot(state: MetricState, errors: f64) -> Arc<MetricsSnapshot> {
+        let labels = BTreeMap::from([
+            ("connector".to_owned(), "orders".to_owned()),
+            ("task".to_owned(), "0".to_owned()),
+        ]);
+        Arc::new(MetricsSnapshot {
+            workers: vec![WorkerMetrics {
+                worker: "w0".to_owned(),
+                state,
+                samples: Arc::new(vec![
+                    MetricSample {
+                        name: "kafka_connect_task_error_total_record_errors_total".to_owned(),
+                        labels: labels.clone(),
+                        value: errors,
+                    },
+                    MetricSample {
+                        name: "kafka_connect_task_error_deadletterqueue_produce_requests_total"
+                            .to_owned(),
+                        labels,
+                        value: 0.0,
+                    },
+                ]),
+                age_secs: Some(0),
+                error: None,
+            }],
+            state,
+        })
+    }
+
     #[test]
-    fn summarizes_running_connector() {
-        let mut all = serde_json::Map::new();
-        all.insert(
-            "demo".to_owned(),
-            json!({
-                "info": { "type": "source" },
-                "status": {
-                    "connector": { "state": "RUNNING" },
-                    "tasks": [{ "id": 0, "state": "RUNNING" }]
-                }
+    fn suppress_rates_when_cache_expires() {
+        let received = Instant::now()
+            .checked_sub(STALE_AFTER + Duration::from_secs(1))
+            .unwrap();
+        let cached = crate::metrics::CachedMetrics {
+            snapshot: snapshot(MetricState::Available, 30.0),
+            received,
+            previous: Some(crate::metrics::PreviousMetrics {
+                snapshot: snapshot(MetricState::Available, 10.0),
+                received: received.checked_sub(Duration::from_secs(10)).unwrap(),
             }),
-        );
+        };
+        let panel = processing_errors_panel(&cached, &BTreeMap::new());
+        assert_eq!(panel.state, Some(MetricState::Stale));
+        let row = &panel.rows[0];
+        assert_eq!(row.state, MetricState::Stale);
+        assert_eq!(row.record_errors.count, Some(30.0));
+        assert_eq!(row.record_errors.rate_per_sec, None);
+    }
 
-        let mut running_connectors = 0;
-        let mut total_tasks = 0;
-        let mut running_tasks = 0;
-        for (_name, info) in &all {
-            let status = info.get("status").cloned().unwrap_or(Value::Null);
-            if status.pointer("/connector/state").and_then(Value::as_str) == Some("RUNNING") {
-                running_connectors += 1;
-            }
-            let tasks = status
-                .get("tasks")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            total_tasks += tasks.len();
-            running_tasks += tasks
-                .iter()
-                .filter(|task| task.get("state").and_then(Value::as_str) == Some("RUNNING"))
-                .count();
+    #[test]
+    fn distinguish_sink_dlq_from_source_or_missing_configuration() {
+        for (info, expected) in [
+            (
+                json!({"info": {"type": "sink", "config": {
+                    "errors.deadletterqueue.topic.name": "private-topic"
+                }}}),
+                Some(true),
+            ),
+            (json!({"info": {"type": "sink", "config": {}}}), Some(false)),
+            (
+                json!({"info": {"type": "source", "config": {
+                    "errors.deadletterqueue.topic.name": "ignored-for-source"
+                }}}),
+                Some(false),
+            ),
+            (json!({"info": {"type": "sink"}}), None),
+        ] {
+            assert_eq!(dlq_configuration(&info), expected);
         }
+    }
 
-        assert_eq!(running_connectors, 1);
-        assert_eq!(running_tasks, 1);
-        assert_eq!(total_tasks, 1);
-        assert_eq!(truncate_error(Some(&"x".repeat(250))).len(), 203);
+    #[test]
+    fn hide_exported_dlq_zero_when_not_configured() {
+        let cached = crate::metrics::CachedMetrics {
+            snapshot: snapshot(MetricState::Available, 3.0),
+            received: Instant::now(),
+            previous: None,
+        };
+        let dlq_configured = BTreeMap::from([("orders".to_owned(), Some(false))]);
+        let page = DashboardPage {
+            active: "dashboard",
+            version: "test".to_owned(),
+            kafka_cluster_id: "test".to_owned(),
+            plugins: 1,
+            metrics: DashboardMetrics {
+                total_connectors: 1,
+                running_connectors: 1,
+                failed_connectors: 0,
+                running_tasks: 1,
+                total_tasks: 1,
+            },
+            processing_errors: processing_errors_panel(&cached, &dlq_configured),
+            status_distribution: Vec::new(),
+            failures: Vec::new(),
+            connectors: Vec::new(),
+            flash: None,
+        };
+        let html = page.render().unwrap();
+        let row = html
+            .split("<td>orders</td>")
+            .nth(1)
+            .unwrap()
+            .split("</tr>")
+            .next()
+            .unwrap();
+        let cells: Vec<_> = row.split("</td>").collect();
+        // After the connector: task, collection, errors, failures, retries,
+        // skipped, logged, DLQ attempts, DLQ failures, DLQ status, timestamp.
+        assert!(cells[2].contains('3'));
+        assert!(cells[7].contains("not configured"));
+        assert!(cells[8].contains("not configured"));
+        assert!(!cells[7].contains(">0"));
+        assert!(!cells[8].contains(">0"));
+        assert!(cells[10].contains("unavailable"));
     }
 }

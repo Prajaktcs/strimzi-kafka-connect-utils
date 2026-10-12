@@ -53,6 +53,60 @@
 </div>
 
 <section>
+  <h3>Processing errors, retries and dead-letter activity</h3>
+  <p role="status">Exporter collection:
+    {% if let Some(state) = processing_errors.state %}<strong>{{ state }}</strong>
+    {% else %}<strong>not configured</strong>{% endif %}.
+    Counts are cumulative exporter counters; rates compare consecutive available collections using their actual elapsed time.
+    This panel shows exporter measurements only; the failure list above still comes from the Connect REST API.</p>
+  {% if processing_errors.is_collection_error() %}
+  <p class="error">Cannot collect metrics. This is a collection failure, not connector processing activity.</p>
+  {% endif %}
+  {% if processing_errors.is_unavailable() %}
+  <p class="notice">Metrics unavailable. Configure <code>kafka.metrics_targets_file</code> and start <code>just port-forward-all</code>; no zeros are shown.</p>
+  {% endif %}
+  <p class="notice">Stale rows retain historical counts only; missing rates mean no valid baseline, a reset, or stale data. Reload the Dashboard to refresh this panel.</p>
+  {% if processing_errors.rows.is_empty() %}
+  {% if processing_errors.has_exported_state() %}
+  <p class="notice">No connector/task error metric series are currently exported.</p>
+  {% endif %}
+  {% else %}
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Worker</th><th>Connector</th><th>Task</th><th>Collection</th>
+        <th>Record errors</th><th>Record failures</th><th>Retries</th>
+        <th>Skipped</th><th>Logged</th>
+        <th>DLQ write attempts</th><th>DLQ failures</th><th>DLQ status</th><th>Last error (epoch ms)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in &processing_errors.rows %}
+      <tr>
+        <td class="mono">{{ row.worker }}</td>
+        <td>{{ row.connector }}</td>
+        <td>{{ row.task }}</td>
+        <td>{{ row.state }}</td>
+        <td>{% if let Some(count) = row.record_errors.count %}{{ count }}{% if let Some(rate) = row.record_errors.rate_per_sec %} ({{ rate }}/s){% endif %}{% if row.counter_reset %} <span>counter reset</span>{% endif %}{% else %}unavailable{% endif %}</td>
+        <td>{% if let Some(count) = row.record_failures.count %}{{ count }}{% if let Some(rate) = row.record_failures.rate_per_sec %} ({{ rate }}/s){% endif %}{% else %}unavailable{% endif %}</td>
+        <td>{% if let Some(count) = row.retries.count %}{{ count }}{% if let Some(rate) = row.retries.rate_per_sec %} ({{ rate }}/s){% endif %}{% else %}unavailable{% endif %}</td>
+        <td>{% if let Some(count) = row.records_skipped.count %}{{ count }}{% else %}unavailable{% endif %}</td>
+        <td>{% if let Some(count) = row.errors_logged.count %}{{ count }}{% else %}unavailable{% endif %}</td>
+        <td>{% if row.dlq_enabled() %}{% if let Some(count) = row.dlq_writes.count %}{{ count }}{% else %}unavailable{% endif %}{% else %}{{ row.dlq_status() }}{% endif %}</td>
+        <td>{% if row.dlq_enabled() %}{% if let Some(count) = row.dlq_failures.count %}{{ count }}{% else %}unavailable{% endif %}{% else %}{{ row.dlq_status() }}{% endif %}</td>
+        <td>{{ row.dlq_status() }}</td>
+        <td class="mono">{{ row.last_error() }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="notice">No record payloads or error messages are exposed here; only exporter counters. A DLQ that is not configured or unsupported is shown as such, never as a healthy zero.</p>
+  {% endif %}
+</section>
+
+<section>
   <h3>All connectors</h3>
   <table>
     <thead>

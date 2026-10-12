@@ -245,7 +245,14 @@ See `examples/` directory for more examples.
 
 ### Dashboard (UI)
 
-View an overview of all connectors, their status, and health metrics.
+View an overview of all connectors, their status, and health metrics, plus a
+processing-error panel: per connector/task cumulative record errors, failures,
+retries, skipped and logged counts, dead-letter writes/failures, derived rates,
+and explicit availability (missing metrics or a DLQ that is not configured are
+never shown as healthy zeros; metric collection failures are never reported as
+connector processing failures). See [supported measurements and
+semantics](k8s/README.md#processing-error-and-dead-letter-measurements) and
+[metrics setup](#per-worker-prometheus-metrics).
 
 1. Start the application: `just run`
 2. Navigate to the **Dashboard** page

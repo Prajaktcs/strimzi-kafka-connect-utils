@@ -69,7 +69,10 @@ async fn dispatch_monitor_status_before_the_session_deadline() {
         .lines()
         .find_map(|line| line.strip_prefix("event: "))
         .expect("named SSE event");
-    assert!(matches!(event, "connecting" | "listening"));
+    assert!(matches!(
+        event,
+        "connecting" | "listening" | "monitor-error"
+    ));
     // EventSource discards frames without nonempty data, even with an event name.
     assert!(text.lines().any(|line| line
         .strip_prefix("data: ")

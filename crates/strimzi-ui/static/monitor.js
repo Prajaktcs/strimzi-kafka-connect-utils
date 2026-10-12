@@ -24,6 +24,8 @@
     status.textContent = "Listening for snapshot notifications…";
   });
   source.addEventListener("snapshots", (event) => {
+    // Latest-value delivery may coalesce the earlier listening event.
+    status.textContent = "Listening for snapshot notifications…";
     // HTML is rendered and escaped by the server's Askama template.
     results.innerHTML = event.data;
   });

@@ -128,7 +128,7 @@ fn run_monitor_session(
     }
     let mut monitor = NotificationMonitor::new(bootstrap, topic);
     let group = format!("strimzi-ops-monitor-{}", uuid::Uuid::new_v4());
-    monitor.start(&group)?;
+    monitor.start_ephemeral(&group)?;
     let _ = sender.send_replace(Event::default().event("listening").data("Listening"));
     let mut tracker = SnapshotTracker::new();
     let started = Instant::now();

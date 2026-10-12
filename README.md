@@ -207,6 +207,11 @@ Track snapshot progress in real-time:
 
 The page opens immediately and streams snapshot status and progress over Server-Sent Events (SSE) during the selected duration. Each viewer has an independent Kafka consumer, so simultaneous sessions receive the same notifications rather than splitting them.
 
+UI viewer groups disable automatic offset storage and commits, so repeated
+sessions do not retain Kafka offset records. The CLI's named monitor groups
+keep their existing commit behavior. A snapshot event confirms that the stream
+is listening even when latest-value delivery coalesces the earlier status event.
+
 Click **Stop Monitoring** to end a session early; navigating away also releases its consumer. At the deadline, the stream closes and the final cards remain visible. Consumer or connection failures are shown on the page without automatically restarting the session. Sessions start from new notifications and do not persist history. Live monitoring requires JavaScript.
 
 Kafka's advertised broker addresses must be reachable from the UI process. Forwarding only the bootstrap port is insufficient if Kafka advertises cluster-only DNS names.

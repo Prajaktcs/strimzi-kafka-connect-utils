@@ -10,7 +10,7 @@ use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
 
 use super::parser::{parse_prometheus, MAX_RESPONSE_BYTES};
-use super::targets::{read_targets, Target, TargetsError};
+use super::targets::{read_roots, read_targets, Target, TargetsError};
 use super::{MetricSample, MetricState, MetricsSnapshot, WorkerMetrics};
 
 pub const COLLECTION_INTERVAL: Duration = Duration::from_secs(10);
@@ -26,8 +26,9 @@ type ScrapeResult = Result<(Vec<MetricSample>, Instant), &'static str>;
 /// small-byte, high-cardinality responses cannot inflate decoding memory.
 ///
 /// `new` does not construct a blocking client. Call `collect` only on a blocking
-/// thread; its client is constructed and destroyed inside that call, so this
-/// cache may safely be moved back to an async polling owner between calls.
+/// thread; clients are constructed and destroyed within each collection round,
+/// shared only by workers using the same roots. CA files are reread every round.
+/// This cache may safely move back to an async polling owner between calls.
 /// Endpoints, credentials, and collection times are private and excluded from
 /// `Debug` output and public snapshots.
 pub struct MetricsCollector {
@@ -64,7 +65,7 @@ impl MetricsCollector {
         let targets = match read_targets(path) {
             Ok(targets) => targets,
             Err(TargetsError::Missing) => {
-                self.fail_all("cannot read metrics targets", MetricState::Unavailable);
+                self.fail_all("cannot read metrics targets", MetricState::CollectionError);
                 return self.snapshot();
             }
             Err(TargetsError::Invalid(reason)) => {
@@ -81,19 +82,7 @@ impl MetricsCollector {
         if targets.is_empty() {
             return self.snapshot();
         }
-        let Ok(http) = Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(REQUEST_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-        else {
-            self.fail_all(
-                "cannot initialize metrics collection",
-                MetricState::CollectionError,
-            );
-            return self.snapshot();
-        };
-        for (id, result) in scrape_targets(&http, &targets) {
+        for (id, result) in scrape_targets(&targets) {
             if let Some(worker) = self.workers.get_mut(id) {
                 match result {
                     Ok((samples, collected_at)) => worker.succeed(samples, collected_at),
@@ -196,11 +185,26 @@ impl StoredWorker {
     }
 }
 
-fn scrape_targets<'a>(http: &Client, targets: &'a [Target]) -> Vec<(&'a str, ScrapeResult)> {
+fn scrape_targets(targets: &[Target]) -> Vec<(&str, ScrapeResult)> {
+    // A client must never acquire another target's custom trust roots. Reuse
+    // only exact CA-file configurations, and drop all clients before returning.
+    let mut clients = BTreeMap::new();
+    for target in targets {
+        clients
+            .entry(target.ca_file.as_deref())
+            .or_insert_with(|| metrics_client(target));
+    }
     thread::scope(|scope| {
         let mut tasks = Vec::with_capacity(targets.len());
         let mut outcomes = Vec::with_capacity(targets.len());
         for target in targets {
+            let http = match &clients[&target.ca_file.as_deref()] {
+                Ok(http) => http,
+                Err(reason) => {
+                    outcomes.push((target.id.as_str(), Err(*reason)));
+                    continue;
+                }
+            };
             match thread::Builder::new().spawn_scoped(scope, move || scrape(http, target)) {
                 Ok(task) => tasks.push((target.id.as_str(), task)),
                 Err(_) => {
@@ -216,6 +220,23 @@ fn scrape_targets<'a>(http: &Client, targets: &'a [Target]) -> Vec<(&'a str, Scr
         }
         outcomes
     })
+}
+
+fn metrics_client(target: &Target) -> Result<Client, &'static str> {
+    let roots = target
+        .ca_file
+        .as_deref()
+        .map_or_else(|| Ok(Vec::new()), read_roots)?;
+    let mut builder = Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(REQUEST_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none());
+    for root in roots {
+        builder = builder.add_root_certificate(root);
+    }
+    builder
+        .build()
+        .map_err(|_| "cannot initialize metrics collection")
 }
 
 fn scrape(http: &Client, target: &Target) -> ScrapeResult {

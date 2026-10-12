@@ -36,6 +36,9 @@ pub async fn monitor(State(state): State<AppState>) -> HtmlResult {
     })
 }
 
+const MAX_DISPLAYED_PER_WORKER: usize = 25;
+const MAX_DISPLAYED_TOTAL: usize = 200;
+
 /// Browsers only read the application cache; this handler never scrapes workers.
 pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
     let cached = state.metrics_snapshot();
@@ -46,6 +49,7 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
     } else {
         cached.snapshot.state
     };
+    let mut remaining = MAX_DISPLAYED_TOTAL;
     let workers = cached
         .snapshot
         .workers
@@ -55,6 +59,16 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
                 || "never".to_owned(),
                 |age| format!("{} s", age.saturating_add(elapsed.as_secs())),
             );
+            let mut finite = worker
+                .samples
+                .iter()
+                .filter(|sample| sample.value.is_finite());
+            let samples: Vec<_> = finite
+                .by_ref()
+                .take(remaining.min(MAX_DISPLAYED_PER_WORKER))
+                .collect();
+            remaining -= samples.len();
+            let omitted = finite.count();
             MetricsWorkerView {
                 worker: &worker.worker,
                 state: if expired && worker.state == MetricState::Available {
@@ -64,11 +78,8 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
                 },
                 age,
                 error: worker.error.as_deref(),
-                samples: worker
-                    .samples
-                    .iter()
-                    .filter(|sample| sample.value.is_finite())
-                    .collect(),
+                samples,
+                omitted,
             }
         })
         .collect();

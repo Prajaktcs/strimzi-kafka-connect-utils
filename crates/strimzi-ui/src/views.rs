@@ -88,6 +88,7 @@ pub struct MetricsWorkerView<'a> {
     pub age: String,
     pub error: Option<&'a str>,
     pub samples: Vec<&'a MetricSample>,
+    pub omitted: usize,
 }
 
 #[derive(Template)]

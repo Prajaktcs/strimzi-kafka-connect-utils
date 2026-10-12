@@ -52,7 +52,7 @@ setup: ensure-cluster build-connect deploy sync-secrets apply-connector port-for
     @echo ""
     @echo "Local stack is ready."
     @echo "  Connect API : http://127.0.0.1:8083"
-    @echo "  Metrics     : per-pod localhost forwards in .local/connect-metrics.toml"
+    @echo "  Metrics     : per-pod HTTPS forwards + CA in .local/connect-metrics.toml"
     @echo "  Kafka       : 127.0.0.1:9092"
     @echo "  Postgres    : 127.0.0.1:5432  (postgres / password / source_db)"
     @echo "  RustFS S3   : {{ rustfs_endpoint }}"
@@ -84,6 +84,10 @@ build-connect: ensure-buildx
 # Deploy local Kubernetes environment (Strimzi/Kafka/Postgres/RustFS/Connect)
 deploy:
     cd k8s && ./deploy.sh
+
+# Provision/reuse the local metrics TLS Secret without replacing existing identity
+provision-metrics-tls:
+    bash {{ helper }} provision-metrics-tls
 
 # Check deployment status
 status:

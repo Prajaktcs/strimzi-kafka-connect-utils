@@ -6,6 +6,14 @@ metadata:
   namespace: kafka
 data:
   metrics-config.yml: |
+    httpServer:
+      ssl:
+        keyStore:
+          filename: /mnt/connect-metrics-tls/server.p12
+          type: PKCS12
+          password: "${CONNECT_METRICS_KEYSTORE_PASSWORD}"
+        certificate:
+          alias: localhost
     lowercaseOutputName: true
     lowercaseOutputLabelNames: true
     rules:
@@ -100,6 +108,22 @@ spec:
       configMapKeyRef:
         name: connect-metrics
         key: metrics-config.yml
+  template:
+    pod:
+      volumes:
+        - name: connect-metrics-tls
+          secret:
+            secretName: connect-metrics-tls
+    connectContainer:
+      volumeMounts:
+        - name: connect-metrics-tls
+          mountPath: /mnt/connect-metrics-tls
+      env:
+        - name: CONNECT_METRICS_KEYSTORE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: connect-metrics-tls
+              key: password
   config:
     # Replication factors for local development (single broker)
     config.storage.replication.factor: 1

@@ -32,6 +32,7 @@ warehouse to perform an upgrade or rollback.
 - Kubernetes cluster (Colima, Minikube, kind, or Docker Desktop)
 - kubectl installed and configured
 - [just](https://github.com/casey/just) (`brew install just`)
+- OpenSSL (`brew install openssl` on macOS), used for CA/server certificates and PKCS12
 - Minimum 8GB RAM allocated to your cluster for the stack and image build
 
 ## Quick Start
@@ -104,7 +105,7 @@ The script will:
 - Deploy PostgreSQL with CDC configuration
 - Deploy RustFS and run the `rustfs-init` Job to initialize `warehouse`
 - Deploy Kafka cluster in **KRaft mode** (takes ~3 minutes)
-- Deploy Kafka Connect with custom image (built locally)
+- Provision/reuse Secret `connect-metrics-tls` before deploying Kafka Connect with the custom local image
 - Wait for everything to be ready
 
 ### 3. Verify Deployment
@@ -238,12 +239,16 @@ survived a RustFS pod restart and initializer rerun.
 
 ## Per-worker Connect and Debezium Metrics
 
-`03-kafka-connect.yaml` applies the exporter ConfigMap **before** the KafkaConnect
-resource and enables Strimzi's `jmxPrometheusExporter` on pod port **9404** at
-`/metrics`. It exports actual Connect worker/rebalance, connector status, task
-status, source/sink record totals and task errors, plus numeric Debezium snapshot
-and streaming attributes. This does not deploy Prometheus, compute rates, or
-derive lag/health from Connect REST status.
+`deploy.sh` provisions/reuses TLS Secret `connect-metrics-tls` before applying
+`03-kafka-connect.yaml`. The manifest applies the exporter ConfigMap **before**
+KafkaConnect and enables JMX Exporter 1.6.0 **HTTPS** on pod port **9404** at
+`/metrics`. `httpServer.ssl.keyStore` loads a mounted PKCS12 file from
+`/mnt/connect-metrics-tls/server.p12`; its `password:
+"${CONNECT_METRICS_KEYSTORE_PASSWORD}"` resolves the Secret-provided environment
+variable inside JMX Exporter, not through a shell or a plaintext ConfigMap.
+The exporter exposes actual Connect worker/rebalance, connector/task status,
+source/sink record totals/task errors, and numeric Debezium snapshot/streaming
+attributes. It does not deploy Prometheus, compute rates or derive health from REST.
 
 Use the background supervisor, not a Service forward (a Service selects just
 one worker):
@@ -252,10 +257,17 @@ one worker):
 just sync-secrets
 just port-forward-all
 just status-forwards
-# Inspect the current per-pod addresses, then curl one of those /metrics URLs:
+# Inspect current per-pod addresses; use one of those HTTPS URLs (port may differ):
 cat .local/connect-metrics.toml
+curl --fail --cacert .local/connect-metrics-tls/ca.crt https://127.0.0.1:9404/metrics
 just stop-forwards
 ```
+
+The trusted request must succeed without `--insecure`. The same exporter must
+reject plain `http://` requests; an HTTPS request without the local CA must fail
+certificate verification. After changing a targets file to HTTP, the UI reports
+`metrics endpoints require HTTPS` and retains only explicitly stale last-good
+samples. Restoring the HTTPS URL and its CA recovers on the next collection.
 
 The supervisor discovers **all** pods with
 `strimzi.io/name=my-connect-cluster-connect` every 15 seconds (API requests have a
@@ -264,7 +276,7 @@ The supervisor discovers **all** pods with
 tracks pod UIDs to restart forwards after same-name recreation, adds workers on
 scale-up, and removes them only after a successful discovery proves them absent.
 Pending, unready and terminating pods remain in the targets file: an unreachable
-localhost port 0 represents their collection failure instead of hiding them.
+HTTPS localhost port 0 represents their collection failure instead of hiding them.
 Discovery failures retain known identities, stop their forwards and publish
 unreachable targets; the next successful discovery repairs them. An empty
 successful discovery publishes `workers = []`. Stopping forwards also retains
@@ -274,6 +286,51 @@ children, and `status-forwards` shows each worker. Use
 `NAMESPACE=<namespace> CONNECT_CLUSTER=<cluster> bash scripts/local-dev.sh port-forward-all`
 to change metrics discovery (the other local service names remain unchanged).
 The TOML file is atomically replaced with mode 0600 on each discovery.
+Every worker entry includes `ca_file = "connect-metrics-tls/ca.crt"`, resolved
+relative to `.local/connect-metrics.toml`. `port-forward-all` retrieves only the
+public CA from the existing Secret, so a different checkout can connect without
+copying server private keys. Old HTTP supervisors are restarted automatically.
+
+### Local TLS Provisioning, Renewal and Rollback
+
+`just provision-metrics-tls` (also called by `just deploy`/`just setup`) needs
+namespace `kafka` and OpenSSL. On first use it creates a 10-year local CA and a
+one-year server certificate with IP SAN `127.0.0.1` and DNS SAN `localhost`.
+The CA/server private keys, PKCS12, password and certificates are stored under
+ignored `.local/connect-metrics-tls/` with directory mode 0700/file mode 0600.
+Only `server.p12`, `password` and public `ca.crt` enter the Kubernetes Secret;
+the CA private key remains local. `issuer.crt` is the local signing CA certificate;
+`ca.crt` is synchronized public cluster trust. Never commit/share private material,
+dump the Secret or enable shell tracing while handling it.
+
+Provisioning is idempotent: an existing complete Secret is never replaced, even
+if this checkout has no private keys. API/RBAC errors fail rather than generating
+an unrelated CA. If the Secret is absent, complete valid local material is reused;
+partial/public-only or expired material fails with an explicit recovery error.
+Concurrent Secret creation cannot overwrite another provisioner's identity.
+CA synchronization retains a changed previous trust certificate as
+`ca.crt.retained.*` and leaves local signing/server keys untouched.
+
+For renewal, back up the **entire** private TLS directory and current Secret to
+restricted, uncommitted storage first; do not delete the Secret to trigger setup.
+Use the matching `ca.key`/`issuer.crt` to sign a new server certificate with the
+same SANs and `serverAuth` usage, rebuild `server.p12` with alias `localhost`
+and the retained password using OpenSSL `-passout file:<password-file>`, then
+explicitly update the Secret from files. Retain the prior PKCS12/password/CA.
+For CA rotation, stage a new CA/certificate/keystore as a deliberate operator
+change, publish its public CA to clients, and replace all three Secret entries
+together. A synced public-only checkout cannot issue a renewal; use the original
+signing keys or an explicitly managed new issuer.
+
+After any Secret update, restart Connect via Strimzi's rolling-update annotation:
+`kubectl annotate strimzipodset my-connect-cluster-connect -n kafka
+strimzi.io/manual-rolling-update=true --overwrite`, wait for Connect readiness,
+then run `just port-forward-all` to synchronize trust and verify with the
+`curl --cacert` command above. Secret environment variables are fixed at pod
+startup; never depend on live password reload. Rollback restores the retained
+Secret PKCS12/password/CA together, rolls Connect again, and resynchronizes trust.
+None of these procedures requires deleting PVCs, Kafka offsets or existing data.
+The metrics HTTPS-only client policy remains in effect during rollback.
 
 Configure `[kafka] metrics_targets_file = ".local/connect-metrics.toml"` in
 `secrets.toml` (`just sync-secrets` does this). Relative paths resolve against the
@@ -287,16 +344,23 @@ file instead of an aggregate/load-balanced endpoint:
 id = "connect-worker-0"
 url = "https://worker-0.metrics.example.internal/metrics"
 bearer_token = "replace-with-private-token" # optional, sent only by the server
+ca_file = "certificates/company-ca.pem" # optional PEM CA, relative to this TOML
 
 [[workers]]
 id = "connect-worker-1"
 url = "https://worker-1.metrics.example.internal/metrics"
 ```
 
+All metrics URLs must be HTTPS, **including unauthenticated loopback URLs**.
+Without `ca_file` the collector uses default public roots. Both certificate-chain
+trust and URL hostname/IP verification are enforced; there is no insecure bypass.
+The local certificate SANs cover loopback forwarding, not arbitrary pod DNS names;
+production/in-cluster collectors must use certificates for their real hostnames.
+
 Protect that file (`chmod 600`) and do not commit tokens. Endpoint URLs, bearer
-tokens and raw exporter/error responses are not sent to the browser. The local
-exporter has no authentication: it is reachable only through the cluster and
-explicit Kubernetes-authorized, IPv4-loopback forwards; there is no
+tokens and raw exporter/error responses are not sent to the browser. Local metrics
+are encrypted HTTPS but have **no client authentication**: they are reachable
+through the cluster and Kubernetes-authorized IPv4-loopback forwards. There is no
 NodePort, Ingress, hostPort or public metrics Service in these manifests.
 **Strimzi 1.2.0's generated NetworkPolicy permits port 9404 from any in-cluster
 pod.** Kubernetes policies are additive, so adding another restrictive policy
@@ -310,12 +374,15 @@ round before the next. Browser refreshes read the cached snapshot, not exporters
 Samples keep the complete identity `(worker, metric name, all labels)`, including
 Connect `connector`/`task` and Debezium `server`/`context`; workers/tasks are never
 silently combined. Missing or non-finite values are unavailable, not zero.
+Raw UI tables render at most **25 rows per worker and 200 rows total**, with
+explicit truncation notices. Collection/cache data remains complete; these are
+display limits, not scrape/sample limits.
 
 | State | Meaning |
 | --- | --- |
 | available | A successful scrape produced usable samples; a real reported zero remains zero. |
 | unavailable | Metrics are not configured, membership/exporter is empty, or a requested sample is missing/non-finite. |
-| collection error | A configured target or targets file failed before any successful data was collected. |
+| collection error | A configured target or targets file (including a missing/unreadable configured file) failed before any successful data was collected. |
 | stale | A failed scrape/file refresh retains previously good samples, or cached samples are older than 30 seconds. Sample age is shown; retained values are not current. |
 
 The local PostgreSQL source explicitly uses
@@ -331,6 +398,8 @@ not assigned a guessed connector/task.
 Primary configuration references:
 - [Strimzi 1.2.0 Kafka Connect exporter example](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/examples/metrics/kafka-connect-metrics.yaml).
 - [JMX Exporter 1.6.0 rule input, ordering, labels and snake-case semantics](https://prometheus.github.io/jmx_exporter/1.6.0/configuration/rules/).
+- [JMX Exporter 1.6.0 HTTP TLS configuration](https://prometheus.github.io/jmx_exporter/1.6.0/configuration/ssl/).
+- [1.6.0 keystore password variable-resolution call](https://github.com/prometheus/jmx_exporter/blob/1.6.0/jmx_prometheus_common/src/main/java/io/prometheus/jmx/common/HTTPServerFactory.java#L1391-L1400) and [exact `${ENV_NAME}` resolver syntax](https://github.com/prometheus/jmx_exporter/blob/1.6.0/collector/src/main/java/io/prometheus/jmx/variable/VariableResolver.java).
 - [Debezium PostgreSQL custom metric tags and monitoring](https://debezium.io/documentation/reference/3.7/connectors/postgresql.html#postgresql-monitoring).
 - [Strimzi 1.2.0 generated Connect NetworkPolicy](https://github.com/strimzi/strimzi-kafka-operator/blob/1.2.0/cluster-operator/src/main/java/io/strimzi/operator/cluster/model/KafkaConnectCluster.java).
 

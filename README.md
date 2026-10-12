@@ -77,6 +77,7 @@ See [runtime pin provenance and state-preserving rollback requirements](k8s/READ
 - Rust toolchain (stable) with Cargo
 - [just](https://github.com/casey/just) — command runner (`brew install just`)
 - Docker and kubectl (Colima recommended for local k8s)
+- OpenSSL (local metrics CA, certificates and PKCS12 provisioning)
 - librdkafka (for Kafka features): `brew install librdkafka cmake pkg-config`
 - Git
 
@@ -103,7 +104,7 @@ cd strimzi-ops
 just setup
 ```
 
-Requires [just](https://github.com/casey/just), Docker, kubectl, and preferably Colima (`brew install just colima docker kubectl`).
+Requires [just](https://github.com/casey/just), Docker, kubectl, OpenSSL, and preferably Colima (`brew install just colima docker kubectl openssl`).
 First run can take 5–10 minutes. Tear down with `just destroy`.
 
 ### Option B: Connect to Existing Cluster
@@ -149,14 +150,21 @@ Run `just --list` to see all recipes. The important ones:
 
 ## Per-worker Prometheus Metrics
 
-The local stack enables Strimzi's JMX Prometheus exporter at each Connect pod's
-`http://<pod>:9404/metrics`. `just port-forward-all` starts one supervised,
-IPv4-loopback forward **per pod**, starting at port 9404, and atomically publishes
-`.local/connect-metrics.toml`. It refreshes all-worker membership every 15 seconds
-(5-second Kubernetes API timeout), handles rollouts and scale changes, and keeps
-unhealthy workers visible as failed targets rather than sampling a Service.
-`just status-forwards` shows the supervisor and workers; `just stop-forwards`
-stops their tracked processes without killing unrelated metrics-port listeners.
+The local stack enables **HTTPS** on Strimzi's JMX Prometheus exporter on each
+Connect pod's port 9404. `just setup` provisions/reuses a private local CA and
+server certificate with `127.0.0.1`/`localhost` SANs, installs the PKCS12/password
+in Kubernetes Secret `connect-metrics-tls`, then deploys Connect. Private keys
+and passwords remain in ignored, restrictive-permission `.local/connect-metrics-tls/`
+and the Secret; they are never embedded in manifests.
+`just port-forward-all` synchronizes only the Secret's public CA (including from
+another checkout), starts one supervised IPv4-loopback forward **per pod**, and
+atomically publishes `.local/connect-metrics.toml` with HTTPS URLs and relative
+`ca_file = "connect-metrics-tls/ca.crt"`. It refreshes all-worker membership every
+15 seconds (5-second Kubernetes API timeout), handles rollouts/scale changes, and
+keeps unhealthy workers visible as failed HTTPS port-0 targets rather than
+sampling a Service. A pre-TLS supervisor is automatically restarted.
+`just status-forwards` shows workers; `just stop-forwards` stops only tracked
+metrics processes without killing unrelated metrics-port listeners.
 
 `just sync-secrets` sets this server-side configuration:
 
@@ -166,22 +174,28 @@ connect_url = "http://127.0.0.1:8083"
 metrics_targets_file = ".local/connect-metrics.toml"
 ```
 
-Paths resolve relative to the secrets file, and targets are reread every
-collection. For remote exporters, use a private, owner-readable TOML targets
-file containing one `[[workers]]` entry per worker with `id`, `url`, and optional
-`bearer_token`; do not use a load-balanced exporter URL. Tokens and endpoint URLs
-stay server-side. No Prometheus server or public metrics exposure is deployed.
-The unauthenticated local exporter is still reachable by in-cluster pods under
-Strimzi's default metrics NetworkPolicy; it is not a production security boundary.
+`metrics_targets_file` resolves relative to the secrets file; targets are reread
+every collection. For remote exporters, use a private, owner-readable TOML file
+with one `[[workers]]` entry per worker: `id`, **HTTPS** `url`, optional
+`bearer_token`, and optional `ca_file` pointing to a PEM CA certificate relative
+to the targets TOML directory (absolute paths also work). Without `ca_file`,
+normal public trust roots apply. CA and hostname verification are always enabled;
+**all HTTP metrics URLs are rejected, including unauthenticated loopback ones**.
+Do not use a load-balanced exporter URL. Credentials/endpoints remain server-side.
+No Prometheus server or public metrics exposure is deployed. The local HTTPS
+exporter has no client authentication and remains reachable by in-cluster pods
+under Strimzi's default metrics NetworkPolicy; TLS is not an authorization boundary.
 
 Collection runs server-side with a 3-second request timeout and a 10-second
 interval **after each round**; browser refreshes use cached results. Successful
 samples are available; missing/non-finite samples, unconfigured metrics and
-empty exporters/membership are unavailable (never fabricated zeroes). Failures
-without previous data show collection error. Last good samples survive scrape
-or target-file failures as stale, and become stale after 30 seconds without
+empty exporters/membership are unavailable (never fabricated zeroes). A configured
+but missing/unreadable targets file is a collection error, not unconfigured metrics.
+Failures without previous data show collection error. Last good samples survive
+scrape/target-file failures as stale, and become stale after 30 seconds without
 refresh; their age is retained. Samples keep worker, connector/task and all
-Debezium server/context labels separate.
+Debezium server/context labels separate. Raw UI tables show at most **25 rows per
+worker and 200 total**, with truncation notices; backend samples remain complete.
 
 The local single-task PostgreSQL source uses Debezium's
 `custom.metric.tags = connector=postgres-source-connector,task=0` to preserve

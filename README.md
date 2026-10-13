@@ -259,6 +259,12 @@ cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --json connector.yaml
 cargo run -q -p strimzi-ops --bin strimzi-lint -- lint --strict connector.yaml
 ```
 
+Lint `--json` output serializes the validation report directly: `valid`,
+`summary` (`errors`, `warnings`, `info`), and `results` (`rule_id`, `severity`,
+`message`, `path`). Severity names are lowercase; absent paths are `null`;
+the human-readable `formatted` field is omitted. JSON object field order is
+not a contract. Errors exit with status 1; warnings do so only with `--strict`.
+
 **Features:**
 
 - Validates YAML and JSON configurations

@@ -10,7 +10,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 use strimzi_ops_core::{
     parse_config_text, to_strimzi_yaml, validate_text, ConfigFormat, ConnectClient,
     CreateConnectorRequest, NotificationMonitor, SnapshotTracker, SnapshotTrigger,
@@ -451,21 +451,7 @@ pub fn lint_command(
 
 fn emit_report(report: &ValidationReport, json_output: bool) -> Result<()> {
     if json_output {
-        let output = json!({
-            "valid": report.valid,
-            "summary": {
-                "errors": report.summary.errors,
-                "warnings": report.summary.warnings,
-                "info": report.summary.info,
-            },
-            "results": report.results.iter().map(|r| json!({
-                "rule_id": r.rule_id,
-                "severity": r.severity.as_str(),
-                "message": r.message,
-                "path": r.path,
-            })).collect::<Vec<_>>(),
-        });
-        print_json(&output)?;
+        print_json(report)?;
         return Ok(());
     }
 

@@ -26,8 +26,11 @@ impl AppState {
 
     /// Start the application's single metrics collector, never a collector per viewer.
     pub fn start_metrics(&self) -> Option<tokio::task::JoinHandle<()>> {
-        self.metrics
-            .start(self.settings.metrics_targets_file.clone())
+        self.metrics.start(
+            self.settings.metrics_targets_file.clone(),
+            self.settings.connect_url.clone(),
+            self.settings.bootstrap_servers.clone(),
+        )
     }
 
     pub(crate) fn metrics_snapshot(&self) -> Arc<CachedMetrics> {

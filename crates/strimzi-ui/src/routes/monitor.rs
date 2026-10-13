@@ -20,9 +20,9 @@ use crate::blocking::spawn_blocking;
 use crate::error::Error;
 use crate::state::AppState;
 use crate::views::{
-    active_views, queue_views, render, snapshot_metrics, streaming_views, throughput_views,
-    HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage, MonitorPage,
-    MonitorResultsPage, SnapshotCards,
+    active_views, queue_views, render, sink_lag_views, snapshot_metrics, streaming_views,
+    throughput_views, HtmlResult, MetricsPanel, MetricsWorkerView, MissingBootstrapPage,
+    MonitorPage, MonitorResultsPage, SnapshotCards,
 };
 
 const DEFAULT_TOPIC: &str = "debezium.notifications";
@@ -108,6 +108,14 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         expired,
         MAX_DISPLAYED_TOTAL,
     );
+    let lag_age = cached
+        .sink_lag
+        .age_secs
+        .map(|age| age.saturating_add(elapsed.as_secs()));
+    // The oldest retained group must not expire independently fresh groups.
+    let lag_expired = expired;
+    let (sink_lag, sink_lag_omitted) =
+        sink_lag_views(&cached.sink_lag, lag_expired, MAX_DISPLAYED_TOTAL);
     render(MetricsPanel {
         state: panel_state,
         workers,
@@ -120,6 +128,15 @@ pub async fn metrics(State(state): State<AppState>) -> HtmlResult {
         queues_omitted,
         actives,
         actives_omitted,
+        sink_lag_state: if lag_expired && cached.sink_lag.state == MetricState::Available {
+            MetricState::Stale
+        } else {
+            cached.sink_lag.state
+        },
+        sink_lag_age: lag_age.map_or_else(|| "never".to_owned(), |age| format!("{age} s")),
+        sink_lag_error: cached.sink_lag.error,
+        sink_lag,
+        sink_lag_omitted,
     })
 }
 

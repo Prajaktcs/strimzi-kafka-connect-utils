@@ -241,6 +241,7 @@ write_secrets() {
   cat >"${ROOT}/secrets.toml" <<EOF
 [kafka]
 bootstrap_servers = "127.0.0.1:9092"
+# Single-broker local listener: loopback 9092 -> svc/my-cluster-kafka-local-0:9094.
 connect_url = "http://127.0.0.1:8083"
 metrics_targets_file = ".local/connect-metrics.toml"
 
@@ -290,7 +291,7 @@ start_port_forward() {
   local svc="$2"
   local local_port="$3"
   local remote_port="$4"
-  local pid_file log_file old_pid
+  local pid_file log_file old_pid old_command
 
   mkdir -p "${PID_DIR}"
   pid_file="${PID_DIR}/${name}.pid"
@@ -298,8 +299,12 @@ start_port_forward() {
 
   if [[ -f "${pid_file}" ]]; then
     old_pid="$(cat "${pid_file}")"
-    if kill -0 "${old_pid}" 2>/dev/null && port_listening "${local_port}"; then
-      echo "Port-forward ${name} already running (pid ${old_pid} → 127.0.0.1:${local_port})"
+    old_command="$(ps -p "${old_pid}" -o command= 2>/dev/null || true)"
+    if kill -0 "${old_pid}" 2>/dev/null && port_listening "${local_port}" \
+      && [[ "${old_command}" == *"--address 127.0.0.1"* ]] \
+      && [[ "${old_command}" == *"${svc}"* ]] \
+      && [[ "${old_command}" == *"${local_port}:${remote_port}"* ]]; then
+      echo "Port-forward ${name} already running (pid ${old_pid} → 127.0.0.1:${local_port} → ${svc}:${remote_port})"
       return 0
     fi
     if kill -0 "${old_pid}" 2>/dev/null; then
@@ -328,7 +333,7 @@ start_port_forward() {
   local i
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if kill -0 "$(cat "${pid_file}")" 2>/dev/null && port_listening "${local_port}"; then
-      echo "Port-forward ${name} → 127.0.0.1:${local_port}"
+      echo "Port-forward ${name} → 127.0.0.1:${local_port} → ${svc}:${remote_port}"
       return 0
     fi
     sleep 0.3
@@ -564,7 +569,7 @@ port_forward_all() {
   # Retrieve public trust before publishing HTTPS targets, including other checkouts.
   sync_metrics_ca
   start_port_forward connect svc/my-connect-cluster-connect-api 8083 8083
-  start_port_forward kafka svc/my-cluster-kafka-bootstrap 9092 9092
+  start_port_forward kafka svc/my-cluster-kafka-local-0 9092 9094
   start_port_forward postgres svc/postgres 5432 5432
   start_port_forward rustfs svc/rustfs 9000 9000
   start_port_forward rustfs-console svc/rustfs 9001 9001
@@ -582,7 +587,7 @@ port_forward_all() {
 }
 
 status_port_forwards() {
-  local name port pid_file pid
+  local name port pid_file pid command
   local -a pairs=(
     "connect:8083"
     "kafka:9092"
@@ -597,8 +602,17 @@ status_port_forwards() {
     pid_file="${PID_DIR}/${name}.pid"
     if [[ -f "${pid_file}" ]]; then
       pid="$(cat "${pid_file}")"
-      if kill -0 "${pid}" 2>/dev/null && port_listening "${port}"; then
+      command="$(ps -p "${pid}" -o command= 2>/dev/null || true)"
+      if [[ "${name}" == kafka ]] \
+        && { [[ "${command}" != *"svc/my-cluster-kafka-local-0"* ]] \
+          || [[ "${command}" != *"9092:9094"* ]] \
+          || [[ "${command}" != *"--address 127.0.0.1"* ]]; }; then
+        echo "  kafka: wrong/stale forward target; run just port-forward-all"
+      elif kill -0 "${pid}" 2>/dev/null && port_listening "${port}"; then
         echo "  ${name}: up (pid ${pid} → 127.0.0.1:${port})"
+        if [[ "${name}" == kafka ]]; then
+          echo "    broker 0 local listener → svc/my-cluster-kafka-local-0:9094 (single broker; plaintext)"
+        fi
       else
         echo "  ${name}: down (stale pid file)"
       fi
@@ -641,6 +655,24 @@ stop_port_forwards() {
   echo "Port-forwards stopped."
 }
 
+doctor_kafka() {
+  echo "Kafka local path: 127.0.0.1:9092 → svc/my-cluster-kafka-local-0:9094"
+  echo "  Single broker 0 only; plaintext, unauthenticated, loopback-only forward."
+  kubectl --request-timeout=5s get kafka my-cluster -n "${NAMESPACE}" \
+    -o jsonpath='{range .spec.kafka.listeners[?(@.name=="local")]}  Listener: {.port}; advertised: {.configuration.brokers[0].advertisedHost}:{.configuration.brokers[0].advertisedPort}{"\n"}{end}' \
+    || return 1
+  kubectl --request-timeout=5s get service my-cluster-kafka-local-0 -n "${NAMESPACE}" \
+    -o jsonpath='  Service: {.spec.type}; broker pod: {.spec.selector.strimzi\.io/pod-name}; target port: {.spec.ports[0].targetPort}{"\n"}' \
+    || return 1
+  if command -v kcat >/dev/null 2>&1; then
+    # Metadata only: no consumer group membership, records or commits.
+    kcat -b 127.0.0.1:9092 -L -m 5
+  else
+    echo "  Metadata not checked (optional kcat missing). Run: kcat -b 127.0.0.1:9092 -L -m 5"
+    echo "  A listening TCP port alone does not prove advertised metadata is reachable."
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $0 <command>
@@ -654,6 +686,7 @@ Commands:
   port-forward-all
   status-forwards
   stop-forwards
+  doctor-kafka
 EOF
 }
 
@@ -669,6 +702,7 @@ main() {
     port-forward-all) port_forward_all ;;
     status-forwards) status_port_forwards ;;
     stop-forwards) stop_port_forwards ;;
+    doctor-kafka) doctor_kafka ;;
     metrics-supervisor) metrics_supervisor ;;
     *) usage; exit 1 ;;
   esac

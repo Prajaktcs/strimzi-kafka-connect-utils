@@ -31,6 +31,7 @@ fn expires_cached_flags_before_comparing_notification_state() {
                 error: None,
             }],
         }),
+        sink_lag: Arc::new(strimzi_ops_core::metrics::SinkLagCollector::new(None, None).snapshot()),
         received: Instant::now(),
         previous: None,
     };

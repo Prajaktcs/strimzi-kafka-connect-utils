@@ -1,15 +1,23 @@
-{% if snapshots.is_empty() %}
-<p class="notice">No snapshot notifications received.</p>
-{% else %}
-<div class="cards">
-  {% for s in snapshots %}
-  <div class="card snapshot-card">
-    <strong>{{ s.name }}</strong>
-    <p>Status: {{ s.status }} — Progress: {{ s.progress }}%</p>
-    <div class="progress" role="progressbar" aria-label="Snapshot progress for {{ s.name }}" aria-valuenow="{{ s.progress }}" aria-valuemin="0" aria-valuemax="100">
-      <span style="width: {{ s.progress }}%"></span>
-    </div>
+<section aria-label="Snapshot notification events">
+  <h3>Snapshot notifications</h3>
+  {% if let Some(error) = notification_error %}
+  <p class="error" role="alert">Notifications unavailable: {{ error }}. Metrics collection continues independently until the session ends.</p>
+  {% endif %}
+  {% if snapshots.is_empty() %}
+  <p class="notice">No snapshot notifications received in this session. This does not imply no snapshot is running; available metrics remain below.</p>
+  {% else %}
+  <div class="cards">
+    {% for s in snapshots %}
+    <section class="card snapshot-card">
+      <h4>Notification source {{ s.connector }} — {{ s.context }}</h4>
+      <p>Notification lifecycle: <strong>{{ s.status }}</strong></p>
+      <p>Last notification ID: <code>{{ s.id }}</code> · timestamp (epoch ms): {% if let Some(timestamp) = s.timestamp %}{{ timestamp }}{% else %}not reported{% endif %}</p>
+      <details><summary>Recent notification events (last 20 per logical source/context)</summary>
+        {% for event in s.events %}<pre>{{ event }}</pre>{% endfor %}
+      </details>
+    </section>
+    {% endfor %}
   </div>
-  {% endfor %}
-</div>
-{% endif %}
+  {% endif %}
+</section>
+{% include "snapshot_metrics.html" %}

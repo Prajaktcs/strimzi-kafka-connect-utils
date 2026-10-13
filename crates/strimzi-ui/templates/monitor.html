@@ -4,14 +4,14 @@
 <h2>Monitor</h2>
 <section aria-labelledby="metrics-heading">
   <h3 id="metrics-heading">Live connector metrics</h3>
-  <p class="lede">Common Connect throughput and applicable Debezium streaming health, by connector and task. Collected server-side from every configured worker without consuming message payloads; missing data is never zero.</p>
+  <p class="lede">Connect throughput and supported Debezium snapshot/streaming measurements. Collected server-side from every configured worker without consuming message payloads; missing data is never zero.</p>
   <div hx-get="/monitor/metrics" hx-trigger="load, every 10s" hx-swap="innerHTML">
     <p class="notice">Loading metrics availability…</p>
   </div>
 </section>
 
 <h3>Snapshot notifications</h3>
-<p class="lede">Track Debezium snapshot progress via notification events</p>
+<p class="lede">Run a timed live session showing notification lifecycle events alongside independently collected snapshot metrics.</p>
 
 {% if let Some(err) = error %}
 <div class="error">{{ err }}</div>
@@ -31,7 +31,7 @@
     <button type="submit">Start Monitoring</button>
   </div>
 </form>
-<p class="lede">Snapshot status updates live during the selected duration. Leaving the page stops monitoring.</p>
+<p class="lede">Notifications and metrics update live during the selected duration. Stop, disconnect, or leaving the page ends the session; the shared metrics collector is independent.</p>
 {% else %}
 <p class="notice">Kafka bootstrap servers are required for snapshot notifications, but not for metrics collection.</p>
 {% endif %}

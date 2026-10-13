@@ -10,6 +10,7 @@ mod backpressure;
 mod collector;
 mod failures;
 mod parser;
+mod snapshot;
 mod streaming;
 mod targets;
 mod throughput;
@@ -21,6 +22,7 @@ pub use backpressure::{
 pub use collector::{MetricsCollector, COLLECTION_INTERVAL, REQUEST_TIMEOUT, STALE_AFTER};
 pub use failures::{FailureCounter, FailuresReport, TaskFailures};
 pub use parser::parse_prometheus;
+pub use snapshot::{debezium_snapshots, DebeziumSnapshot, SnapshotTableRows};
 pub use streaming::{debezium_streaming, DebeziumStreaming};
 pub use throughput::{
     connector_throughput, ConnectorThroughput, TaskThroughput, ThroughputStage, ThroughputState,

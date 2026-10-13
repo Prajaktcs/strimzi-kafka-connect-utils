@@ -68,6 +68,20 @@ data:
         type: GAUGE
       # Debezium's supported key is custom.metric.tags. No connector/task is
       # guessed from server/topic.prefix. Untagged beans deliberately do not match.
+      # MXBean Map<String, Long> becomes TabularData(key, value). JMX Exporter
+      # 1.6.0 appends key=<table> to bean properties and retains RowsScanned as
+      # the attribute, not a <RowsScanned>value path. Match before the generic
+      # rule to retain table identity; the final key can contain commas.
+      - pattern: 'debezium\.([^<]+)<(?=(?:[^>]*, )?type=connector-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))(?=(?:[^>]*, )?server=([^,>]+)(?:,|>))(?=(?:[^>]*, )?context=([^,>]+)(?:,|>))[^>]*, key=(.+)><>rows_scanned'
+        name: debezium_$1_rows_scanned
+        attrNameSnakeCase: true
+        type: GAUGE
+        labels:
+          connector: "$2"
+          task: "$3"
+          server: "$4"
+          context: "$5"
+          table: "$6"
       - pattern: 'debezium\.([^<]+)<(?=(?:[^>]*, )?type=connector-metrics(?:,|>))(?=(?:[^>]*, )?connector=([^,>]+)(?:,|>))(?=(?:[^>]*, )?task=([^,>]+)(?:,|>))(?=(?:[^>]*, )?server=([^,>]+)(?:,|>))(?=(?:[^>]*, )?context=([^,>]+)(?:,|>))[^>]*><>(total_number_of_[a-z_]*events_seen|number_of_erroneous_events|number_of_events_filtered|number_of_committed_transactions)'
         name: debezium_$1_$6_total
         attrNameSnakeCase: true

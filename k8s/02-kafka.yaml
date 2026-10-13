@@ -48,6 +48,17 @@ spec:
         port: 9093
         type: internal
         tls: true
+      # Host-only development path; the existing plain listener stays in-cluster.
+      # Requires the broker-specific Service below and a loopback port-forward.
+      - name: local
+        port: 9094
+        type: internal
+        tls: false
+        configuration:
+          brokers:
+            - broker: 0
+              advertisedHost: 127.0.0.1
+              advertisedPort: 9092
     config:
       offsets.topic.replication.factor: 1
       transaction.state.log.replication.factor: 1
@@ -71,3 +82,21 @@ spec:
         limits:
           memory: 256Mi
           cpu: 200m
+---
+# Deliberately not a bootstrap/load-balanced Service: metadata, coordinator and
+# partition traffic must all reach broker 0's local listener. Single broker only.
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-cluster-kafka-local-0
+  namespace: kafka
+spec:
+  type: ClusterIP
+  selector:
+    strimzi.io/cluster: my-cluster
+    strimzi.io/pod-name: my-cluster-dual-role-0
+  ports:
+    - name: tcp-local
+      port: 9094
+      targetPort: 9094
+      protocol: TCP

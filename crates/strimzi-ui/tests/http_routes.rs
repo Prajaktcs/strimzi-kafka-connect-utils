@@ -28,6 +28,41 @@ async fn reject_monitor_stream_without_bootstrap_servers() {
 }
 
 #[tokio::test]
+async fn lag_panel_reads_cache_without_connect_or_kafka_calls() {
+    let server = httpmock::MockServer::start();
+    let connectors = server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/connectors");
+        then.status(200).json_body(serde_json::json!([]));
+    });
+    let app = router(AppState::new(ConnectionSettings {
+        connect_url: Some(server.base_url()),
+        bootstrap_servers: Some("private-bootstrap.invalid:9092".to_owned()),
+        ..ConnectionSettings::default()
+    }));
+    for _ in 0..3 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/monitor/metrics")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = std::str::from_utf8(&body).unwrap();
+        assert!(html.contains("aria-label=\"Kafka consumer-group lag\""));
+        assert!(!html.contains(&server.base_url()));
+        assert!(!html.contains("private-bootstrap.invalid"));
+    }
+    assert_eq!(connectors.hits(), 0);
+}
+
+#[tokio::test]
 async fn reject_monitor_stream_with_blank_topic() {
     let app = router(AppState::new(ConnectionSettings {
         bootstrap_servers: Some("localhost:9092".to_owned()),

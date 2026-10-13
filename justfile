@@ -101,6 +101,7 @@ doctor:
     kubectl get pods -n {{ namespace }} || true
     echo ""
     bash {{ helper }} status-forwards || true
+    bash {{ helper }} doctor-kafka || true
     echo ""
     echo -n "Connect :8083 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8083/ || echo "down"
     echo -n "UI      :8501 → "; curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501/ || echo "down"
@@ -145,10 +146,10 @@ port-forward:
     @echo "Kafka Connect API → http://127.0.0.1:8083 (Ctrl+C to stop)"
     kubectl port-forward --address 127.0.0.1 svc/my-connect-cluster-connect-api 8083:8083 -n {{ namespace }}
 
-# Forward Kafka bootstrap (9092) — foreground
+# Forward broker 0's local listener — foreground, single-broker development only
 port-forward-kafka:
-    @echo "Kafka bootstrap → 127.0.0.1:9092 (Ctrl+C to stop)"
-    kubectl port-forward --address 127.0.0.1 svc/my-cluster-kafka-bootstrap 9092:9092 -n {{ namespace }}
+    @echo "Kafka broker 0 → 127.0.0.1:9092 → local listener :9094 (plaintext; Ctrl+C to stop)"
+    kubectl port-forward --address 127.0.0.1 svc/my-cluster-kafka-local-0 9092:9094 -n {{ namespace }}
 
 # Forward PostgreSQL (5432) — foreground
 port-forward-postgres:

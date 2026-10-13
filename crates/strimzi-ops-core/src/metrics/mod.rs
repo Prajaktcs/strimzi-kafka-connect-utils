@@ -10,6 +10,9 @@ mod backpressure;
 mod collector;
 mod failures;
 mod parser;
+mod sink_lag;
+#[cfg(feature = "kafka")]
+mod sink_lag_kafka;
 mod snapshot;
 mod streaming;
 mod targets;
@@ -22,6 +25,7 @@ pub use backpressure::{
 pub use collector::{MetricsCollector, COLLECTION_INTERVAL, REQUEST_TIMEOUT, STALE_AFTER};
 pub use failures::{FailureCounter, FailuresReport, TaskFailures};
 pub use parser::parse_prometheus;
+pub use sink_lag::{ConnectorLag, PartitionLag, SinkLagCollector, SinkLagSnapshot};
 pub use snapshot::{debezium_snapshots, DebeziumSnapshot, SnapshotTableRows};
 pub use streaming::{debezium_streaming, DebeziumStreaming};
 pub use throughput::{

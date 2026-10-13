@@ -142,8 +142,8 @@ just port-forward-rustfs-console
 Then configure `secrets.toml`:
 ```toml
 [kafka]
-bootstrap_servers = "localhost:9092"
-connect_url = "http://localhost:8083"
+bootstrap_servers = "127.0.0.1:9092"
+connect_url = "http://127.0.0.1:8083"
 metrics_targets_file = ".local/connect-metrics.toml"
 
 [storage]
@@ -174,6 +174,315 @@ RustFS is pinned to **1.0.1**. Its
 [S3 Tables / Iceberg REST support](https://docs.rustfs.com/en/administration/data/s3-tables)
 is a preview feature, not a guarantee of full REST compatibility. The single-node
 HTTP deployment and fixed administrator credentials are not production settings.
+
+### Host Kafka Metadata and Sink Consumer-group Lag
+
+Kafka bootstrap connectivity alone is insufficient: clients subsequently connect
+to the broker and group coordinator addresses returned in metadata. The existing
+`plain` listener on **9092** advertises Kubernetes DNS and remains unchanged for
+Connect (`my-cluster-kafka-bootstrap:9092`). Host clients use a separate **internal**
+`local` listener on **9094**, with broker **0** advertising **127.0.0.1:9092**.
+The private ClusterIP Service `my-cluster-kafka-local-0` selects only
+`my-cluster-dual-role-0`, never a load-balanced bootstrap listener:
+
+```bash
+# Foreground, after applying the listener manifest and waiting for reconciliation:
+kubectl port-forward --address 127.0.0.1 -n kafka \
+  svc/my-cluster-kafka-local-0 9092:9094
+# In another terminal (optional kcat; metadata only, no group join):
+kcat -b 127.0.0.1:9092 -L -m 5
+```
+
+The metadata must identify broker 0 at `127.0.0.1:9092`. Forwarding
+`svc/my-cluster-kafka-bootstrap 9092:9092` cannot repair its advertised DNS.
+This configuration is **single-broker local development only**. Scaling the
+node pool or changing broker IDs requires separate reachable addresses/forwards
+for every advertised broker; do not reuse this mapping for multiple brokers.
+Strimzi's [listener configuration reference](https://strimzi.io/docs/operators/latest/full/configuring.html)
+documents per-broker `advertisedHost` and `advertisedPort`.
+
+No public NodePort, LoadBalancer or ingress is created. Both the local listener
+and forward carry **plaintext, unauthenticated Kafka traffic**. Binding to
+127.0.0.1 prevents remote host access, not access by other local processes;
+cluster workloads may also reach the listener. Kubernetes API/RBAC controls who
+can forward. This is not a production security configuration. Keep settings and
+credentials private; use separately designed TLS/authentication/network policy
+for non-local deployment.
+
+#### Listener Rollout and Rollback Without Resetting State
+
+Do not run `destroy`, `destroy-hard`, delete the namespace/PVCs, recreate the
+KafkaNodePool, reset group offsets or delete Connect internal topics. This change
+adds a listener and Service; it does not change the internal Connect endpoint or
+group identity. Operator reconciliation can roll broker 0 and briefly interrupt
+clients. Schedule it accordingly and retain existing volumes/groups/offsets.
+
+For an existing cluster, from the project root:
+
+```bash
+mkdir -p .local
+# Retain the exact pre-change listener configuration, not a guessed old manifest.
+kubectl get kafka my-cluster -n kafka -o json \
+  | jq '{spec:{kafka:{listeners:.spec.kafka.listeners}}}' \
+  > .local/kafka-listeners.before.json
+kubectl get pvc -n kafka -o wide > .local/kafka-pvcs.before.txt
+# Record important group's offsets/members before rollout with the read-only
+# kafka-consumer-groups commands below; save connector configs privately too.
+kubectl apply -f k8s/02-kafka.yaml
+generation="$(kubectl get kafka my-cluster -n kafka -o jsonpath='{.metadata.generation}')"
+kubectl wait kafka/my-cluster -n kafka \
+  --for="jsonpath={.status.observedGeneration}=${generation}" --timeout=300s
+kubectl wait kafka/my-cluster -n kafka --for=condition=Ready --timeout=300s
+kubectl get svc my-cluster-kafka-local-0 -n kafka -o wide
+kubectl get endpointslice -n kafka \
+  -l kubernetes.io/service-name=my-cluster-kafka-local-0 -o yaml
+# Expect broker 0's endpoint and port 9094, then restart stale pre-change forwards.
+just port-forward-all
+just status-forwards
+just doctor
+# Optional: overwrites secrets.toml with repo LOCAL DEV ONLY credentials/settings.
+just sync-secrets
+```
+
+`port-forward-all` detects/replaces the tracked old Kafka bootstrap forward;
+`status-forwards` flags a wrong target rather than treating its listening TCP
+port as healthy. `doctor` shows the listener/Service mapping and runs bounded
+metadata inspection if `kcat` is installed; without it, metadata is explicitly
+not checked. `stop-forwards` stops local processes, not the broker or its state.
+The generated bootstrap setting stays `127.0.0.1:9092`.
+
+To roll back only this listener change, retain the checked-out manifest change
+until an intentional source rollback, and restore the captured listener list:
+
+```bash
+just stop-forwards
+kubectl patch kafka my-cluster -n kafka --type=merge \
+  --patch-file .local/kafka-listeners.before.json
+generation="$(kubectl get kafka my-cluster -n kafka -o jsonpath='{.metadata.generation}')"
+kubectl wait kafka/my-cluster -n kafka \
+  --for="jsonpath={.status.observedGeneration}=${generation}" --timeout=300s
+kubectl wait kafka/my-cluster -n kafka --for=condition=Ready --timeout=300s
+# Delete only this manually managed Service, never Kafka/PVC/group resources.
+kubectl delete service my-cluster-kafka-local-0 -n kafka
+kubectl get pvc -n kafka -o wide
+```
+
+After rollback, Connect still uses internal 9092, but host Kafka metrics will be
+unavailable until a reachable advertised listener is restored. Do not restore
+the old bootstrap forward and claim host Kafka connectivity works. Reapplying
+the new manifest intentionally enables the local listener again.
+
+#### Offset Meaning and Read-only Observation
+
+Sink lag uses the connector's **Kafka input consumer group**, default
+`connect-{connector-name}`; `consumer.override.group.id` takes precedence. This
+is not the Connect worker group, a Debezium source offset, an Iceberg control
+group, a task's current position, a records/sec counter or delivery latency.
+`committed` is the group's next committed input offset; `end` is the broker's
+next log-end offset. For valid offsets, partition lag is `end - committed`.
+Offset gaps/compaction and transactional visibility mean this offset distance
+is not necessarily an exact count of records available to an application.
+Commit batching means lag can persist after records are processed.
+
+The collector requests metadata/end offsets and the group's committed offsets;
+application code never subscribes, assigns, polls, consumes, commits or joins the
+group. librdkafka's destructor may drain close callbacks, but the observer has no
+subscription, assignment or payload, and automatic offset storage/commits are
+disabled. Requests share an eight-second round deadline with three-second
+per-call timeouts; finite client shutdown waits occur outside that deadline.
+The application waits 10 seconds between rounds; cached data is stale after
+30 seconds. A total is shown only when every configured subscribed partition
+has valid known offsets. Missing commits, unavailable groups/topics,
+invalid/out-of-range offsets and collection errors are explicit, not zero-filled.
+Historical cached values are not current evidence. Connector/group/topic or known
+partition-set changes do not combine old and new partitions. Reads are not atomic
+during production, commits or rebalances; they measure committed progress without
+observing or changing assignment membership.
+
+The current collector connects using plaintext Kafka and validates Kafka's cluster
+ID against Connect. Differing bootstrap overrides, consumer security/isolation
+overrides, unresolved config-provider values and unsupported Java regex syntax
+remain explicitly unavailable. For regex syntax and collection/display bounds,
+see [Monitor configuration and limitations](../README.md#monitor-ui).
+
+#### Reproducible Isolated Backlog / Recovery Smoke
+
+These are **execution instructions, not a claim of a completed smoke run**.
+Require a healthy deployed sample Iceberg sink/RustFS, `jq`, `kcat`, reachable
+host metadata and an available UI `/monitor`. Use a new name per run, and keep
+the existing sample source/sink and all existing groups/offsets untouched.
+This recipe creates a separate KafkaConnector, two-partition input topic,
+Iceberg table, input group and control topic/group.
+
+Iceberg **1.12.0** also needs `iceberg.connect.group-id` equal to
+`consumer.override.group.id`: its coordinator describes that input group's
+members. Setting only the Connect override can leave Iceberg looking for
+`connect-{connector-name}` and fail the task. This plugin-specific setting
+does not change the observer's generic mapping rule; see
+[the pinned IcebergSinkConfig source](https://github.com/apache/iceberg/blob/apache-iceberg-1.12.0/kafka-connect/kafka-connect/src/main/java/org/apache/iceberg/connect/IcebergSinkConfig.java).
+
+```bash
+suffix="$(date +%Y%m%d%H%M%S)"
+connector="sink-lag-smoke-${suffix}"
+topic="sink-lag-smoke-${suffix}"
+group="sink-lag-smoke-group-${suffix}"
+broker="my-cluster-dual-role-0"
+bootstrap="my-cluster-kafka-bootstrap:9092"
+mkdir -p .local
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-topics.sh \
+  --bootstrap-server "$bootstrap" --create --topic "$topic" \
+  --partitions 2 --replication-factor 1
+# Clone only the sample sink's config; no source connector or existing group change.
+kubectl get kafkaconnector iceberg-sink-connector -n kafka -o json \
+  | jq --arg name "$connector" --arg topic "$topic" --arg group "$group" \
+       --arg table "public.sink_lag_smoke_${suffix}" '
+      .metadata = {name:$name,namespace:"kafka",
+                   labels:{"strimzi.io/cluster":"my-connect-cluster"}}
+      | del(.status)
+      | .spec.tasksMax = 1
+      | .spec.state = "running"
+      | .spec.config += {
+          "topics":$topic,
+          "consumer.override.group.id":$group,
+          "consumer.override.auto.offset.reset":"earliest",
+          "iceberg.connect.group-id":$group,
+          "iceberg.tables":$table,
+          "iceberg.control.topic":($name + "-control"),
+          "iceberg.control.group-id-prefix":($name + "-control-group"),
+          "iceberg.coordinator.transactional.prefix":($name + "-"),
+          "iceberg.control.commit.interval-ms":"10000"
+        }' > .local/sink-lag-smoke.json
+kubectl apply -f .local/sink-lag-smoke.json
+kubectl wait kafkaconnector/"$connector" -n kafka \
+  --for=condition=Ready --timeout=180s
+curl --fail --silent "http://127.0.0.1:8083/connectors/${connector}/status" | jq .
+# Seed both partitions so both have real commits before measuring backlog.
+for partition in 0 1; do
+  printf '{"id":%s,"phase":"seed"}\n' "$partition" \
+    | kcat -b 127.0.0.1:9092 -P -t "$topic" -p "$partition"
+done
+```
+
+Before proceeding, confirm the task is `RUNNING`, both partitions have non-missing
+commits, and the UI/group CLI reaches zero lag. Poll the following **read-only**
+CLI commands until that baseline is established (allow sink commit cycles):
+
+```bash
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --offsets
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --members --verbose
+```
+
+Then pause the **isolated** connector through its operator-managed desired state
+(do not use REST pause, which the operator can reconcile away), wait for REST
+connector and task `PAUSED`, and create a fixed backlog:
+
+```bash
+kubectl patch kafkaconnector "$connector" -n kafka --type=merge \
+  -p '{"spec":{"state":"paused"}}'
+paused=false
+for attempt in $(seq 1 90); do
+  if curl --fail --silent "http://127.0.0.1:8083/connectors/${connector}/status" \
+    | jq -e '.connector.state == "PAUSED" and (.tasks | length > 0)
+             and all(.tasks[]; .state == "PAUSED")' >/dev/null; then
+    paused=true
+    break
+  fi
+  sleep 2
+done
+if [ "$paused" != true ]; then
+  echo "Isolated connector did not pause; stop this smoke and inspect task errors."
+  exit 1
+fi
+for partition in 0 1; do
+  for id in $(seq 1 50); do
+    printf '{"id":%s,"partition":%s,"phase":"backlog"}\n' "$id" "$partition"
+  done | kcat -b 127.0.0.1:9092 -P -t "$topic" -p "$partition"
+done
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --offsets \
+  > .local/sink-lag-smoke.offsets.before.txt
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --members --verbose \
+  > .local/sink-lag-smoke.members.before.txt
+```
+
+Open `/monitor`, keep it refreshing for at least two 10-second collection rounds,
+and record the isolated connector's resolved override group, both committed/end
+offsets, partition lag **50 each** and complete total **100**. Run the same two
+commands into `.after.txt` files and compare them with `diff -u`. With the
+connector paused and no other producer/consumer, commits, member IDs and
+partition assignments must remain unchanged; the observer must not add a member
+or trigger a rebalance. Save this evidence separately from UI screenshots.
+Group descriptions are observations, not proof if another client is changing
+the group concurrently.
+
+```bash
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --offsets \
+  > .local/sink-lag-smoke.offsets.after.txt
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --members --verbose \
+  > .local/sink-lag-smoke.members.after.txt
+diff -u .local/sink-lag-smoke.offsets.before.txt .local/sink-lag-smoke.offsets.after.txt
+diff -u .local/sink-lag-smoke.members.before.txt .local/sink-lag-smoke.members.after.txt
+```
+
+```bash
+kubectl patch kafkaconnector "$connector" -n kafka --type=merge \
+  -p '{"spec":{"state":"running"}}'
+curl --fail --silent "http://127.0.0.1:8083/connectors/${connector}/status" | jq .
+# Repeat read-only group/offset checks until both commits reach their end offsets.
+kubectl exec -n kafka "$broker" -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server "$bootstrap" --group "$group" --describe --offsets
+```
+
+Verify recovery in both UI and CLI: `RUNNING` task, advancing commits and finally
+valid per-partition **0** / complete total **0**. Pause/resume itself can legitimately
+change membership; the unchanged-membership comparison belongs to the stable
+paused observation window, not across resume. Allow commit cycles and confirm
+task errors rather than interpreting missing offsets as recovery.
+Stopping the Kafka forward with the cluster otherwise healthy should produce an
+explicit collection error/stale cached result, never a synthetic zero; restore
+the forward and confirm recovery. Do not reset offsets to manufacture lag.
+Retain isolated smoke resources/evidence for diagnosis, or deliberately remove
+only that smoke connector after the run; existing resources and PVCs must stay.
+
+#### Issue #22 Live Verification
+
+An isolated Iceberg sink with an explicit input-group override was exercised
+against the local Kafka listener. The same Monitor document updated through
+HTMX with JMX targets deliberately unconfigured:
+
+| Observed phase | Partition 0 lag | Partition 1 lag | Complete connector lag |
+| --- | --- | --- | --- |
+| Added empty partition without a commit | 0 | unavailable | unavailable |
+| Seed records committed on both partitions | 0 | 0 | 0 |
+| Paused sink, produced a dedicated backlog | 20 | 20 | 40 |
+| Isolated discovery-forward outage | 20, historical/stale | 20, historical/stale | 40, historical/stale |
+| Resumed sink and observed committed recovery | 0 | 0 | 0 |
+
+The paused window's Kafka CLI offset and member/assignment output was byte-for-byte
+unchanged across observer collection and repeated browser requests. Recovery
+advanced the commits to the corresponding partition end offsets. A subsequent
+paused mapping change to a nonexistent input group showed missing commits on
+both partitions, did not inherit the former group's totals, and did not register
+that group in Kafka. Known end offsets became explicitly historical on discovery
+failure even with no complete lag total.
+
+A separate UI instance pointed at an unreachable Kafka bootstrap address showed
+collection errors with no numeric lag. Restoring the isolated discovery forward
+recovered fresh readings in the same document. Regression tests cover offset
+boundaries, incomplete sums, mapping/partition changes, partial-data expiry and
+independent freshness when another group is stale. `just rust-check`,
+`just rust-test` and core tests without Kafka support passed.
+
+The listener advertises broker 0 as loopback and was verified with `kcat -L`;
+rollout preserved Kafka state but caused the single local Connect worker to
+restart, requiring its stale REST forward to be repaired. Smoke resources and
+temporary UI/forward processes were removed; shared service forwards remain.
+
 
 ### Fresh Warehouse Cutover and Rollback
 

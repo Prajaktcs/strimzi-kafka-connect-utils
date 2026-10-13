@@ -317,7 +317,7 @@ remain explicitly historical/stale.
 The page refreshes every 10 seconds through `/monitor/metrics`, without a full-page
 reload; browser requests never start another collector or consume message payloads.
 Worker availability, last-good sample age and expandable raw measurements remain
-available. Metrics do not require Kafka bootstrap servers. See
+available. **JMX metrics** do not require Kafka bootstrap servers. See
 [metrics setup](#per-worker-prometheus-metrics) and the
 [real source/sink throughput smoke check](k8s/README.md#throughput-semantics-and-local-smoke-check).
 
@@ -334,6 +334,45 @@ kind or a new run from that context. Row-map entries and event counters can
 outlive a run and are labeled retained/historical, not a new snapshot's progress.
 See [snapshot measurements and source reconciliation](k8s/README.md#debezium-snapshot-measurements-and-notifications)
 for supported attributes, identity limitations and browser smoke evidence.
+
+Monitor also shows **Kafka consumer-group committed-offset lag** for sink
+connectors, independently of JMX availability. Configure both `kafka.connect_url`
+and `kafka.bootstrap_servers`. The collector checks the Kafka cluster ID against
+Connect, resolves the default input group `connect-{connector-name}` or
+`consumer.override.group.id`, and reads committed offsets and partition log-end
+offsets without subscribing, assigning, consuming payloads or committing offsets.
+
+Each topic/partition shows its committed offset, end offset and lag; the connector
+total is the checked sum of the complete subscribed partition set, not a maximum
+or a sum of duplicated task measurements. Missing groups/commits, including empty
+partitions without commits, remain unavailable rather than zero. Failed or
+expired collection retains explicitly historical/stale readings. Offset requests
+are not an atomic snapshot during activity/rebalances; commit batching,
+compaction and transactions mean offset distance is not an exact record count or
+proof of downstream durability. Source delay and Connect active records/native
+lag-max remain separate measurements.
+
+Collection shares the application cache: a 10-second delay between rounds,
+30-second stale threshold, 3-second per-request timeouts and an 8-second offset
+round deadline (client shutdown is outside the request deadline). Limits are
+128 discovered connectors, 1,024 subscribed partitions per round, and Kafka
+metadata of 4,096 topics/16,384 partitions; exceeding them is an explicit error.
+The UI displays at most 200 connector-summary/partition rows without truncating
+backend aggregation.
+
+Explicit `topics` and a conservative full-topic `topics.regex` subset are
+supported: ASCII literals, ordinary groups, `.`, `*`, `+`, `?`, `|`, `^`, `$`,
+and escaped dots/hyphens. Java character classes, flags, lookarounds,
+backreferences and counted/lazy/possessive repetitions are explicitly unsupported,
+as are unresolved config-provider expressions. The current collector uses
+plaintext Kafka; consumer security/isolation overrides and bootstrap overrides
+that differ from its configured server list are unavailable, never silently read
+from a guessed cluster. Endpoint configuration stays server-side.
+
+The single-broker local setup provides a private listener advertising
+`127.0.0.1:9092` and a broker-specific loopback forward; the existing in-cluster
+listener is unchanged. See [listener rollout, rollback, offset semantics and
+isolated backlog/recovery verification](k8s/README.md#host-kafka-metadata-and-sink-consumer-group-lag).
 
 Track snapshot lifecycle and measurements in a timed live session:
 

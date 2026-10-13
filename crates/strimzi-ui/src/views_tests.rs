@@ -178,3 +178,111 @@ fn counts_omitted_streaming_identities_at_row_limit_boundaries() {
     assert_eq!(views.len(), 0);
     assert_eq!(omitted, 0);
 }
+
+fn lag_snapshot(partitions: usize) -> SinkLagSnapshot {
+    use strimzi_ops_core::metrics::{ConnectorLag, PartitionLag};
+    SinkLagSnapshot {
+        state: MetricState::Available,
+        age_secs: Some(0),
+        error: None,
+        connectors: Arc::new(vec![ConnectorLag {
+            connector: "sink".to_owned(),
+            group: Some("connect-sink".to_owned()),
+            state: MetricState::Available,
+            total_lag: Some(partitions as u64 * 7),
+            error: None,
+            partitions: (0..partitions)
+                .map(|partition| PartitionLag {
+                    topic: "orders".to_owned(),
+                    partition: i32::try_from(partition).unwrap(),
+                    committed: Some(10),
+                    end: Some(17),
+                    lag: Some(7),
+                    state: MetricState::Available,
+                    error: None,
+                })
+                .collect(),
+        }]),
+    }
+}
+
+#[test]
+fn lag_display_limits_do_not_recompute_complete_totals() {
+    let snapshot = lag_snapshot(201);
+    for limit in [0, 1, 200, 202, 203] {
+        let (views, omitted) = sink_lag_views(&snapshot, false, limit);
+        let displayed = views
+            .iter()
+            .map(|row| 1 + row.partitions.len())
+            .sum::<usize>();
+        assert_eq!(displayed, limit.min(202));
+        assert_eq!(omitted, 202 - displayed);
+        if let Some(row) = views.first() {
+            assert_eq!(row.total, "1407");
+        }
+    }
+}
+
+#[test]
+fn expired_lag_offsets_and_totals_are_historical() {
+    let snapshot = lag_snapshot(1);
+    let (fresh, _) = sink_lag_views(&snapshot, false, 200);
+    let (expired, _) = sink_lag_views(&snapshot, true, 200);
+    assert_eq!(fresh[0].total, "7");
+    assert_eq!(expired[0].state, MetricState::Stale);
+    assert_ne!(expired[0].total, fresh[0].total);
+    let partition = &expired[0].partitions[0];
+    assert_eq!(partition.state, MetricState::Stale);
+    assert!(partition.committed.contains("stale"));
+    assert!(partition.end.contains("stale"));
+    assert!(partition.lag.contains("stale"));
+}
+
+#[test]
+fn unavailable_lag_never_becomes_zero_or_a_complete_sum() {
+    for state in [MetricState::Unavailable, MetricState::CollectionError] {
+        let mut snapshot = lag_snapshot(1);
+        let connector = &mut Arc::get_mut(&mut snapshot.connectors).unwrap()[0];
+        connector.state = state;
+        connector.total_lag = None;
+        connector.group = None;
+        connector.error = Some("cannot resolve sink consumer group");
+        connector.partitions[0].state = state;
+        connector.partitions[0].committed = None;
+        connector.partitions[0].lag = None;
+        for expired in [false, true] {
+            let (views, _) = sink_lag_views(&snapshot, expired, 200);
+            assert_eq!(views[0].state, state);
+            assert_eq!(views[0].total, state.to_string());
+            assert_eq!(views[0].group, "unavailable");
+            assert!(views[0].error.is_some());
+            assert_eq!(views[0].partitions[0].lag, state.to_string());
+            assert_eq!(views[0].partitions[0].committed, state.to_string());
+            if expired {
+                assert!(views[0].partitions[0].end.contains("stale"));
+            } else {
+                assert_eq!(views[0].partitions[0].end, "17");
+            }
+        }
+    }
+}
+
+#[test]
+fn one_stale_group_does_not_expire_an_independent_fresh_group() {
+    let mut snapshot = lag_snapshot(1);
+    let mut stale = snapshot.connectors[0].clone();
+    stale.connector = "older-sink".to_owned();
+    stale.group = Some("older-group".to_owned());
+    stale.state = MetricState::Stale;
+    stale.partitions[0].state = MetricState::Stale;
+    Arc::get_mut(&mut snapshot.connectors).unwrap().push(stale);
+    snapshot.state = MetricState::Stale;
+    snapshot.age_secs = Some(60);
+    let (views, _) = sink_lag_views(&snapshot, false, 200);
+    assert_eq!(views[0].state, MetricState::Available);
+    assert_eq!(views[0].total, "7");
+    assert_eq!(views[0].partitions[0].state, MetricState::Available);
+    assert_eq!(views[1].state, MetricState::Stale);
+    assert!(views[1].total.contains("stale"));
+    assert_eq!(views[1].partitions[0].state, MetricState::Stale);
+}

@@ -295,6 +295,15 @@ mod tests {
         })
     }
 
+    fn unavailable_sink_lag() -> Arc<strimzi_ops_core::metrics::SinkLagSnapshot> {
+        Arc::new(strimzi_ops_core::metrics::SinkLagSnapshot {
+            state: MetricState::Unavailable,
+            connectors: Arc::new(Vec::new()),
+            age_secs: None,
+            error: None,
+        })
+    }
+
     #[test]
     fn suppress_rates_when_cache_expires() {
         let received = Instant::now()
@@ -302,6 +311,7 @@ mod tests {
             .unwrap();
         let cached = crate::metrics::CachedMetrics {
             snapshot: snapshot(MetricState::Available, 30.0),
+            sink_lag: unavailable_sink_lag(),
             received,
             previous: Some(crate::metrics::PreviousMetrics {
                 snapshot: snapshot(MetricState::Available, 10.0),
@@ -342,6 +352,7 @@ mod tests {
     fn hide_exported_dlq_zero_when_not_configured() {
         let cached = crate::metrics::CachedMetrics {
             snapshot: snapshot(MetricState::Available, 3.0),
+            sink_lag: unavailable_sink_lag(),
             received: Instant::now(),
             previous: None,
         };
@@ -411,6 +422,7 @@ mod tests {
                         .collect(),
                     state: MetricState::Available,
                 }),
+                sink_lag: unavailable_sink_lag(),
                 received: Instant::now(),
                 previous: None,
             };

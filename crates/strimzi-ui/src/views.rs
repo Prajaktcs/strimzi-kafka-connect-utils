@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use strimzi_ops_core::metrics::{
     ConnectBackpressure, ConnectorThroughput, DebeziumQueue, DebeziumStreaming, FailureCounter,
-    MetricLookup, MetricSample, MetricState, ThroughputStage, ThroughputValue,
+    MetricLookup, MetricSample, MetricState, SinkLagSnapshot, ThroughputStage, ThroughputValue,
 };
 
 use crate::error::Error;
@@ -393,6 +393,105 @@ pub fn active_views(
     (views, omitted)
 }
 
+pub struct SinkLagPartitionView {
+    pub topic: String,
+    pub partition: i32,
+    pub committed: String,
+    pub end: String,
+    pub lag: String,
+    pub state: MetricState,
+    pub error: Option<&'static str>,
+}
+
+pub struct SinkLagConnectorView {
+    pub connector: String,
+    pub group: String,
+    pub state: MetricState,
+    pub total: String,
+    pub error: Option<&'static str>,
+    pub partitions: Vec<SinkLagPartitionView>,
+}
+
+fn lag_state(state: MetricState, expired: bool) -> MetricState {
+    if expired && state == MetricState::Available {
+        MetricState::Stale
+    } else {
+        state
+    }
+}
+
+fn lag_reading<T: std::fmt::Display>(value: Option<T>, state: MetricState) -> String {
+    match (state, value) {
+        (MetricState::Available, Some(value)) => value.to_string(),
+        (MetricState::Stale, Some(value)) => format!("last observed: {value} (stale)"),
+        _ => state.to_string(),
+    }
+}
+
+fn lag_offset(value: Option<i64>, state: MetricState, expired: bool) -> String {
+    let reading_state = if value.is_some() {
+        if expired || state == MetricState::Stale {
+            MetricState::Stale
+        } else {
+            MetricState::Available
+        }
+    } else {
+        state
+    };
+    lag_reading(value, reading_state)
+}
+
+/// Limit connector summary and partition rows together without recalculating totals.
+pub fn sink_lag_views(
+    snapshot: &SinkLagSnapshot,
+    expired: bool,
+    row_limit: usize,
+) -> (Vec<SinkLagConnectorView>, usize) {
+    let mut remaining = row_limit;
+    let mut omitted = 0;
+    let mut views = Vec::new();
+    for connector in snapshot.connectors.iter() {
+        if remaining == 0 {
+            omitted += 1 + connector.partitions.len();
+            continue;
+        }
+        remaining -= 1;
+        let historical = expired || connector.state == MetricState::Stale;
+        let state = lag_state(connector.state, historical);
+        let partitions = connector
+            .partitions
+            .iter()
+            .take(remaining)
+            .map(|partition| {
+                let state = lag_state(partition.state, historical);
+                SinkLagPartitionView {
+                    topic: partition.topic.clone(),
+                    partition: partition.partition,
+                    committed: lag_offset(partition.committed, state, historical),
+                    end: lag_offset(partition.end, state, historical),
+                    lag: lag_reading(partition.lag, state),
+                    state,
+                    error: partition.error,
+                }
+            })
+            .collect::<Vec<_>>();
+        remaining -= partitions.len();
+        omitted += connector.partitions.len() - partitions.len();
+        views.push(SinkLagConnectorView {
+            connector: connector.connector.clone(),
+            group: connector
+                .group
+                .clone()
+                .unwrap_or_else(|| "unavailable".to_owned()),
+            state,
+            total: lag_reading(connector.total_lag, state),
+            error: connector.error,
+            partitions,
+        });
+    }
+    (views, omitted)
+}
+
 #[derive(Template)]
 #[template(path = "metrics.html")]
 pub struct MetricsPanel<'a> {
@@ -407,6 +506,11 @@ pub struct MetricsPanel<'a> {
     pub queues_omitted: usize,
     pub actives: Vec<ConnectBackpressureView>,
     pub actives_omitted: usize,
+    pub sink_lag_state: MetricState,
+    pub sink_lag_age: String,
+    pub sink_lag_error: Option<&'static str>,
+    pub sink_lag: Vec<SinkLagConnectorView>,
+    pub sink_lag_omitted: usize,
 }
 
 #[derive(Debug, Clone)]

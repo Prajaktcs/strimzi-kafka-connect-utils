@@ -354,8 +354,12 @@ url = "https://worker-1.metrics.example.internal/metrics"
 All metrics URLs must be HTTPS, **including unauthenticated loopback URLs**.
 Bearer tokens are credentials, not flags: validation requires **at least 16
 characters** and **rejects tokens composed only of numeric exposition
-characters** (`0-9eE+-.`, which appear in ordinary metric values). A rejected
-token fails the round before any request, without echoing the token. If a
+characters** (`0-9eE+-.`, which appear in ordinary metric values) **or only
+of identifier characters** (`A-Za-z0-9_`, which occur in ordinary metric and
+label names — e.g. `worker_connector` sits inside
+`kafka_connect_worker_connector_count`). Generate random base64/UUID-style
+secrets, not words that appear in exported names or values. A rejected token
+fails the round before any request, without echoing the token. If a
 credential is deliberately reflected in published samples (a metric name or
 label value carrying it), the worker scrapes fail rather than publish it;
 stale last-good data remains available.

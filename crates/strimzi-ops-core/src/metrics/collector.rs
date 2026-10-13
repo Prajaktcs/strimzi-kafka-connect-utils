@@ -279,8 +279,9 @@ fn scrape(http: &Client, target: &Target) -> ScrapeResult {
     let text = std::str::from_utf8(&bytes).map_err(|_| "cannot decode metrics response")?;
     let mut samples = parse_prometheus(text).map_err(|_| "cannot parse metrics response")?;
     // Do not publish a malicious exporter's reflection of private configuration.
-    // Token validation makes ordinary names and values unable to contain a
-    // token, so only deliberate reflection can match here.
+    // Validation guarantees an accepted token can occur neither in ordinary
+    // sample values nor in legal metric/label names, so any match here is a
+    // deliberate reflection (or a parser-charset regression, also fail-closed).
     if let Some(token) = target
         .authorization
         .as_ref()

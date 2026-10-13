@@ -780,7 +780,15 @@ fn rejects_short_tokens_before_any_request_without_echoing_them() {
     let mut collector = working.collector();
     assert_eq!(collector.collect().workers[0].state, MetricState::Available);
     protected.assert_hits(1);
-    for token in ["a", "short", "1234567890123456", "1.2e+10"] {
+    // `worker_connector` is 16 identifier characters and occurs in ordinary
+    // metric names; it must fail validation like the shorter forms.
+    for token in [
+        "a",
+        "short",
+        "1234567890123456",
+        "1.2e+10",
+        "worker_connector",
+    ] {
         working.replace(&format!(
             "[[workers]]\nid='pod-a'\nurl='{url}'\nbearer_token='{token}'\nca_file='{ca}'\n"
         ));
@@ -802,10 +810,14 @@ fn rejects_short_tokens_before_any_request_without_echoing_them() {
             MetricState::Stale,
             Some(1.0),
         );
-        // For tokens shorter than a few characters, "echoed in errors" is not
-        // textually decidable (any text contains them); assert echo absence
-        // for the ones whose phrase is distinctive.
-        if token.len() > 4 {
+        // Echo absence is only textually decidable for tokens that cannot
+        // occur in ordinary exposition text: identifier-only tokens (e.g.
+        // `worker_connector`) legitimately appear inside retained metric
+        // names, which is exactly why validation rejects them.
+        let identifier_only = token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_'));
+        if !identifier_only {
             assert!(!format!("{snapshot:?}").contains(token));
         }
         protected.assert_hits(1);
@@ -850,7 +862,9 @@ fn reflected_tokens_in_published_names_or_labels_fail_the_worker() {
     let fixture = TargetsFixture::new(&targets(&[("pod-a", &url)], Some(token), server.ca_path()));
     let mut collector = fixture.collector();
 
-    server.mock(|when, then| {
+    // Keep one live mock per response: identical matchers otherwise keep
+    // serving the first body, and later scenarios go unexercised.
+    let mut reflection = server.mock(|when, then| {
         when.method(GET).path("/metrics");
         then.status(200).body(format!(
             "kafka_connect_worker_{token} 1\njmx_scrape_error 0"
@@ -861,7 +875,8 @@ fn reflected_tokens_in_published_names_or_labels_fail_the_worker() {
     assert!(reflected.workers[0].samples.is_empty());
     assert!(!format!("{reflected:?}").contains(token));
 
-    server.mock(|when, then| {
+    reflection.delete();
+    reflection = server.mock(|when, then| {
         when.method(GET).path("/metrics");
         then.status(200).body(format!(
             "kafka_connect_worker_connector_count{{secret=\"{token}\"}} 123\njmx_scrape_error 0"
@@ -872,8 +887,11 @@ fn reflected_tokens_in_published_names_or_labels_fail_the_worker() {
     assert!(reflected.workers[0].samples.is_empty());
     assert!(!format!("{reflected:?}").contains(token));
 
-    // Label names are published too, so an identifier-only token reflected as
-    // a label name must also fail the worker.
+    // An accepted token cannot occur in a legal metric or label name (its
+    // non-identifier bytes are rejected by the parser), so reflecting via a
+    // name fails closed at parsing; the collector's name scans remain as a
+    // parser-charset regression guard.
+    reflection.delete();
     server.mock(|when, then| {
         when.method(GET).path("/metrics");
         then.status(200).body(format!(

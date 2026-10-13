@@ -50,6 +50,70 @@ fn resolves_default_override_and_unique_configured_topics() {
 }
 
 #[test]
+fn regex_respects_effective_internal_topic_exclusion() {
+    let known = [
+        "__consumer_offsets",
+        "__share_group_state",
+        "__transaction_state",
+        "__user_orders",
+        "orders",
+    ]
+    .map(str::to_owned);
+    for override_value in [None, Some("true"), Some("false")] {
+        let mut value = config(json!({"topics.regex": ".*"}));
+        if let Some(setting) = override_value {
+            value.insert(
+                "consumer.override.exclude.internal.topics".to_owned(),
+                Value::String(setting.to_owned()),
+            );
+        }
+        let resolved = resolve_mapping("orders-sink", &value, "broker:9092");
+        assert!(resolved.error.is_none());
+        let expected = if override_value == Some("false") {
+            known.to_vec()
+        } else {
+            vec!["__user_orders".to_owned(), "orders".to_owned()]
+        };
+        assert_eq!(resolved.topics(known.iter()).unwrap(), expected);
+    }
+}
+
+#[test]
+fn explicit_topics_can_include_internal_topics_despite_exclusion() {
+    for setting in ["true", "false"] {
+        let resolved = mapping(json!({
+            "topics": "__consumer_offsets",
+            "consumer.override.exclude.internal.topics": setting,
+        }));
+        assert!(resolved.error.is_none());
+        assert_eq!(
+            resolved.topics(std::iter::empty()).unwrap(),
+            ["__consumer_offsets"],
+        );
+    }
+}
+
+#[test]
+fn invalid_internal_topic_exclusion_never_guesses_a_partition_set() {
+    for value in [
+        json!("maybe"),
+        json!("${env:EXCLUDE}"),
+        json!(1),
+        Value::Null,
+    ] {
+        let resolved = mapping(json!({
+            "topics.regex": ".*",
+            "consumer.override.exclude.internal.topics": value,
+        }));
+        assert_eq!(
+            resolved.reading("orders-sink").error,
+            Some("sink internal topic exclusion override is invalid or unresolved"),
+        );
+        assert_eq!(resolved.reading("orders-sink").total_lag, None);
+    }
+}
+
+#[test]
 fn rejects_unresolved_mapping_and_ambiguous_subscriptions() {
     for value in [
         json!({"topics": "orders", "consumer.override.group.id": "${file:secrets:group}"}),

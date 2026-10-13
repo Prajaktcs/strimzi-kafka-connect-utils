@@ -369,6 +369,14 @@ plaintext Kafka; consumer security/isolation overrides and bootstrap overrides
 that differ from its configured server list are unavailable, never silently read
 from a guessed cluster. Endpoint configuration stays server-side.
 
+Regex expansion respects `consumer.override.exclude.internal.topics` (default
+`true`): Kafka's internal `__consumer_offsets`, `__transaction_state` and
+`__share_group_state` topics are excluded unless set to `false`. This matches
+[Kafka's internal-topic classification](https://github.com/apache/kafka/blob/4.3.1/clients/src/main/java/org/apache/kafka/common/internals/Topic.java),
+not a blanket exclusion of names starting with `__`. Explicit `topics` may name
+internal topics regardless of this setting. Invalid or unresolved overrides
+make the mapping unavailable; changing the setting invalidates cached readings.
+
 The single-broker local setup provides a private listener advertising
 `127.0.0.1:9092` and a broker-specific loopback forward; the existing in-cluster
 listener is unchanged. See [listener rollout, rollback, offset semantics and

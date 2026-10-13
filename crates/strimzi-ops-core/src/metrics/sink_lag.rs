@@ -313,6 +313,7 @@ pub(super) enum Subscription {
 pub(super) struct Mapping {
     pub group: Option<String>,
     pub subscription: Option<Subscription>,
+    exclude_internal_topics: bool,
     pub error: Option<&'static str>,
 }
 
@@ -326,6 +327,35 @@ impl Mapping {
             total_lag: None,
             partitions: Vec::new(),
             error: self.error,
+        }
+    }
+
+    pub(super) fn topics<'a>(
+        &self,
+        known: impl Iterator<Item = &'a String>,
+    ) -> Result<Vec<String>, &'static str> {
+        match self.subscription.as_ref() {
+            Some(Subscription::Topics(topics)) => Ok(topics.clone()),
+            Some(Subscription::Regex(pattern)) => {
+                let regex = topic_regex(pattern)?;
+                // Kafka Topic.isInternal classifies these exact reserved names;
+                // a user topic beginning with "__" is not necessarily internal.
+                // https://github.com/apache/kafka/blob/4.3.1/clients/src/main/java/org/apache/kafka/common/internals/Topic.java
+                Ok(known
+                    .filter(|topic| {
+                        regex.is_match(topic)
+                            && (!self.exclude_internal_topics
+                                || !matches!(
+                                    topic.as_str(),
+                                    "__consumer_offsets"
+                                        | "__transaction_state"
+                                        | "__share_group_state"
+                                ))
+                    })
+                    .cloned()
+                    .collect())
+            }
+            None => Err("sink topic subscription is unavailable"),
         }
     }
 }
@@ -377,6 +407,7 @@ fn resolve_mapping(name: &str, config: &Map<String, Value>, bootstrap: &str) -> 
     let mut mapping = Mapping {
         group: None,
         subscription: None,
+        exclude_internal_topics: true,
         error: None,
     };
     let result = (|| {
@@ -391,6 +422,16 @@ fn resolve_mapping(name: &str, config: &Map<String, Value>, bootstrap: &str) -> 
             return Err("sink group identity is invalid or unresolved");
         }
         mapping.group = Some(group);
+        mapping.exclude_internal_topics =
+            match config.get("consumer.override.exclude.internal.topics") {
+                None | Some(Value::Bool(true)) => true,
+                Some(Value::Bool(false)) => false,
+                Some(Value::String(value)) if value.trim().eq_ignore_ascii_case("true") => true,
+                Some(Value::String(value)) if value.trim().eq_ignore_ascii_case("false") => false,
+                Some(_) => {
+                    return Err("sink internal topic exclusion override is invalid or unresolved")
+                }
+            };
         if config.keys().any(|key| {
             key.starts_with("consumer.override.sasl.")
                 || key.starts_with("consumer.override.ssl.")

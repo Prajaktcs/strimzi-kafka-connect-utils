@@ -13,8 +13,7 @@ use rdkafka::metadata::Metadata;
 use rdkafka::{Offset, TopicPartitionList};
 
 use super::sink_lag::{
-    aggregate, partition_reading, safe_identifier, topic_regex, ConnectorLag, Mapping,
-    Subscription, MAX_PARTITIONS,
+    aggregate, partition_reading, safe_identifier, ConnectorLag, Mapping, MAX_PARTITIONS,
 };
 use super::{MetricState, REQUEST_TIMEOUT};
 
@@ -86,18 +85,7 @@ fn collect_connector(
     deadline: Instant,
     used_partitions: &mut usize,
 ) -> Result<(), &'static str> {
-    let topics = match mapping.subscription.as_ref() {
-        Some(Subscription::Topics(topics)) => topics.clone(),
-        Some(Subscription::Regex(pattern)) => {
-            let regex = topic_regex(pattern)?;
-            metadata
-                .keys()
-                .filter(|topic| regex.is_match(topic))
-                .cloned()
-                .collect()
-        }
-        None => return Err("sink topic subscription is unavailable"),
-    };
+    let topics = mapping.topics(metadata.keys())?;
     if topics.is_empty() {
         reading.error = Some("sink subscription matches no known topics");
         return Ok(());

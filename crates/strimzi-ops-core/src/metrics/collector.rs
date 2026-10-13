@@ -288,7 +288,11 @@ fn scrape(http: &Client, target: &Target) -> ScrapeResult {
         .and_then(|authorization| authorization.strip_prefix("Bearer "))
     {
         let reflected = samples.iter().any(|sample| {
-            sample.name.contains(token) || sample.labels.values().any(|label| label.contains(token))
+            sample.name.contains(token)
+                || sample
+                    .labels
+                    .iter()
+                    .any(|(name, value)| name.contains(token) || value.contains(token))
         });
         if reflected {
             return Err("cannot publish credential-bearing metrics response");

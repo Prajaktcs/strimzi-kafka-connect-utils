@@ -871,6 +871,19 @@ fn reflected_tokens_in_published_names_or_labels_fail_the_worker() {
     assert_eq!(reflected.workers[0].state, MetricState::CollectionError);
     assert!(reflected.workers[0].samples.is_empty());
     assert!(!format!("{reflected:?}").contains(token));
+
+    // Label names are published too, so an identifier-only token reflected as
+    // a label name must also fail the worker.
+    server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200).body(format!(
+            "kafka_connect_worker_connector_count{{{token}=\"reflection\"}} 123\njmx_scrape_error 0"
+        ));
+    });
+    let reflected = collector.collect();
+    assert_eq!(reflected.workers[0].state, MetricState::CollectionError);
+    assert!(reflected.workers[0].samples.is_empty());
+    assert!(!format!("{reflected:?}").contains(token));
 }
 
 #[test]

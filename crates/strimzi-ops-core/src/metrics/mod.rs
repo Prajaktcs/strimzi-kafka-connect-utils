@@ -10,6 +10,7 @@ mod backpressure;
 mod collector;
 mod failures;
 mod parser;
+mod series;
 mod sink_lag;
 #[cfg(feature = "kafka")]
 mod sink_lag_kafka;

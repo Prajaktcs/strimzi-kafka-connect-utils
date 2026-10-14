@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
-use super::{MetricLookup, MetricSample, MetricState, MetricsSnapshot, WorkerMetrics};
+use super::series::Series;
+use super::{MetricLookup, MetricState, MetricsSnapshot, WorkerMetrics};
 
 const PREFIX: &str = "debezium_";
 // The first six suffixes are the projected measurements; the rest only seed
@@ -46,47 +47,6 @@ struct Identity<'a> {
     task: &'a str,
     domain: &'a str,
     server: &'a str,
-}
-
-#[derive(Clone, Copy, Default)]
-enum Series<'a> {
-    #[default]
-    Missing,
-    One(&'a MetricSample),
-    Duplicate,
-}
-
-impl<'a> Series<'a> {
-    fn observe(&mut self, sample: &'a MetricSample) {
-        *self = match self {
-            Self::Missing => Self::One(sample),
-            Self::One(_) | Self::Duplicate => Self::Duplicate,
-        };
-    }
-
-    fn lookup(self, worker: &WorkerMetrics, connected: bool) -> MetricLookup {
-        if matches!(self, Self::Duplicate) {
-            return absent(MetricState::Unavailable);
-        }
-        if worker.state == MetricState::CollectionError {
-            return absent(MetricState::CollectionError);
-        }
-        match self {
-            Self::One(sample)
-                if sample.labels.len() == 4
-                    && sample.value.is_finite()
-                    && sample.value >= 0.0
-                    && (!connected || matches!(sample.value, 0.0 | 1.0))
-                    && matches!(worker.state, MetricState::Available | MetricState::Stale) =>
-            {
-                MetricLookup {
-                    state: worker.state,
-                    value: Some(sample.value),
-                }
-            }
-            _ => absent(MetricState::Unavailable),
-        }
-    }
 }
 
 struct WorkerInventory<'a> {
@@ -170,7 +130,7 @@ pub fn debezium_streaming(snapshot: &MetricsSnapshot) -> Vec<DebeziumStreaming> 
                     if ambiguous {
                         absent(MetricState::Unavailable)
                     } else {
-                        measurements[index].lookup(inventory.worker, index == 0)
+                        measurements[index].lookup(inventory.worker, index == 0, 4)
                     }
                 };
                 DebeziumStreaming {

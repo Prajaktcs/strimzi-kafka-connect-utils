@@ -86,3 +86,10 @@ states. The UI owns one application-wide collector, executes each round with
 HTTP clients are constructed and dropped inside the round, never retained
 across an async wait. Worker snapshots share immutable sample storage rather
 than copying every metric name and label on each refresh.
+
+Snapshot, streaming, and backpressure projections share a private borrowed-series
+accumulator with exact label-count, finite/nonnegative, and optional boolean
+validation. Duplicate series are unavailable even on failed workers; other
+missing or invalid series on failed workers remain collection errors. Only
+available or stale readings retain values. Projection identities, ownership,
+ordering, and derived measurements remain specific to each projection.

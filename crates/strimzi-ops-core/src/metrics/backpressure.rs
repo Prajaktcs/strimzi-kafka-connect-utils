@@ -14,7 +14,8 @@
 
 use std::collections::BTreeMap;
 
-use super::{MetricLookup, MetricSample, MetricState, MetricsSnapshot, WorkerMetrics};
+use super::series::Series;
+use super::{MetricLookup, MetricState, MetricsSnapshot, WorkerMetrics};
 
 const DEBEZIUM_PREFIX: &str = "debezium_";
 // Debezium queue attributes exist in both the snapshot and streaming contexts.
@@ -124,46 +125,6 @@ struct ConnectIdentity<'a> {
     kind: TaskKind,
     connector: &'a str,
     task: &'a str,
-}
-
-#[derive(Clone, Copy, Default)]
-enum Series<'a> {
-    #[default]
-    Missing,
-    One(&'a MetricSample),
-    Duplicate,
-}
-
-impl<'a> Series<'a> {
-    fn observe(&mut self, sample: &'a MetricSample) {
-        *self = match self {
-            Self::Missing => Self::One(sample),
-            Self::One(_) | Self::Duplicate => Self::Duplicate,
-        };
-    }
-
-    /// One real reading with worker-state handling; duplicates, label sets
-    /// outside the row identity, and invalid samples never choose a winner.
-    fn lookup(self, worker: &WorkerMetrics, required_labels: usize) -> MetricLookup {
-        match self {
-            Self::Duplicate => absent(MetricState::Unavailable),
-            Self::One(sample)
-                if sample.labels.len() == required_labels
-                    && sample.value.is_finite()
-                    && sample.value >= 0.0
-                    && matches!(worker.state, MetricState::Available | MetricState::Stale) =>
-            {
-                MetricLookup {
-                    state: worker.state,
-                    value: Some(sample.value),
-                }
-            }
-            _ => absent(match worker.state {
-                MetricState::CollectionError => MetricState::CollectionError,
-                _ => MetricState::Unavailable,
-            }),
-        }
-    }
 }
 
 fn absent(state: MetricState) -> MetricLookup {
@@ -361,11 +322,11 @@ fn queue_row(
             bytes_utilization: absent(MetricState::Unavailable),
         };
     }
-    let total_capacity = series[QUEUE_TOTAL_CAPACITY].lookup(worker, 4);
-    let remaining_capacity = series[QUEUE_REMAINING_CAPACITY].lookup(worker, 4);
+    let total_capacity = series[QUEUE_TOTAL_CAPACITY].lookup(worker, false, 4);
+    let remaining_capacity = series[QUEUE_REMAINING_CAPACITY].lookup(worker, false, 4);
     let queued = queued_share(total_capacity, remaining_capacity);
-    let max_queue_bytes = series[QUEUE_MAX_BYTES].lookup(worker, 4);
-    let current_queue_bytes = series[QUEUE_CURRENT_BYTES].lookup(worker, 4);
+    let max_queue_bytes = series[QUEUE_MAX_BYTES].lookup(worker, false, 4);
+    let current_queue_bytes = series[QUEUE_CURRENT_BYTES].lookup(worker, false, 4);
     DebeziumQueue {
         connector: identity.0,
         task: identity.1,
@@ -482,10 +443,10 @@ pub fn connect_backpressure(snapshot: &MetricsSnapshot) -> Vec<ConnectBackpressu
                     task: task.to_owned(),
                     worker: worker.worker.clone(),
                     kind,
-                    active_records: series[0].lookup(worker, 2),
-                    active_records_max: series[1].lookup(worker, 2),
-                    active_records_avg: series[2].lookup(worker, 2),
-                    consumer_lag_max: lag.lookup(worker, 2),
+                    active_records: series[0].lookup(worker, false, 2),
+                    active_records_max: series[1].lookup(worker, false, 2),
+                    active_records_avg: series[2].lookup(worker, false, 2),
+                    consumer_lag_max: lag.lookup(worker, false, 2),
                 }
             })
         })

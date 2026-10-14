@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use super::series::Series;
 use super::{MetricLookup, MetricSample, MetricState, MetricsSnapshot, WorkerMetrics};
 
 const PREFIX: &str = "debezium_";
@@ -144,47 +145,6 @@ struct Identity<'a> {
     domain: &'a str,
     server: &'a str,
     context: &'a str,
-}
-
-#[derive(Clone, Copy, Default)]
-enum Series<'a> {
-    #[default]
-    Missing,
-    One(&'a MetricSample),
-    Duplicate,
-}
-
-impl<'a> Series<'a> {
-    fn observe(&mut self, sample: &'a MetricSample) {
-        *self = match self {
-            Self::Missing => Self::One(sample),
-            Self::One(_) | Self::Duplicate => Self::Duplicate,
-        };
-    }
-
-    fn lookup(self, worker: &WorkerMetrics, boolean: bool, label_count: usize) -> MetricLookup {
-        if matches!(self, Self::Duplicate) {
-            return absent(MetricState::Unavailable);
-        }
-        if worker.state == MetricState::CollectionError {
-            return absent(MetricState::CollectionError);
-        }
-        match self {
-            Self::One(sample)
-                if sample.labels.len() == label_count
-                    && sample.value.is_finite()
-                    && sample.value >= 0.0
-                    && (!boolean || matches!(sample.value, 0.0 | 1.0))
-                    && matches!(worker.state, MetricState::Available | MetricState::Stale) =>
-            {
-                MetricLookup {
-                    state: worker.state,
-                    value: Some(sample.value),
-                }
-            }
-            _ => absent(MetricState::Unavailable),
-        }
-    }
 }
 
 struct WorkerInventory<'a> {

@@ -38,6 +38,26 @@ struct TargetConfig {
     ca_file: Option<String>,
 }
 
+/// Bearer tokens are credentials only for private endpoints, and must be
+/// generated per target with enough entropy that a deliberate reflection is
+/// the only way one can occur in a metrics body: at least
+/// [`MIN_TOKEN_CHARS`] characters, and never composed only of numeric
+/// exposition characters (`0-9eE+-.`, which can appear in ordinary sample
+/// values) or only of identifier characters (`A-Za-z0-9_`, which occur in
+/// ordinary metric and label names).
+const MIN_TOKEN_CHARS: usize = 16;
+
+/// A token made only of these bytes could occur in an ordinary sample value.
+fn numeric_exposition_byte(byte: u8) -> bool {
+    byte.is_ascii_digit() || matches!(byte, b'e' | b'E' | b'+' | b'-' | b'.')
+}
+
+/// A token made only of these bytes could occur inside an ordinary metric or
+/// label name, where reflection is indistinguishable from exposition.
+fn identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b':')
+}
+
 pub(super) enum TargetsError {
     Missing,
     Invalid(&'static str),
@@ -111,6 +131,18 @@ fn parse_targets(text: &str, directory: &Path) -> Result<Vec<Target>, TargetsErr
                     })
                 {
                     return Err(TargetsError::Invalid("invalid metrics bearer token"));
+                }
+                // A token that could also be a metric value or sit inside an
+                // ordinary metric or label name, or one shorter than a random
+                // credential, would make deliberate reflection
+                // indistinguishable from exposition.
+                if token.len() < MIN_TOKEN_CHARS
+                    || token.bytes().all(numeric_exposition_byte)
+                    || token.bytes().all(identifier_byte)
+                {
+                    return Err(TargetsError::Invalid(
+                        "metrics bearer token is insufficiently collision resistant",
+                    ));
                 }
                 let mut value = HeaderValue::from_str(&format!("Bearer {token}"))
                     .map_err(|_| TargetsError::Invalid("invalid metrics bearer token"))?;
@@ -202,6 +234,28 @@ mod tests {
             failure("[[workers]]\nid='pod-a'\nurl='https://localhost/metrics'\nbearer_token=\"private-token\\r\\nInjected: secret\""),
             "invalid metrics bearer token"
         );
+        // `worker_connector` is 16 identifier characters: it occurs inside
+        // the ordinary metric `kafka_connect_worker_connector_count`, so
+        // identifier-only tokens are collision-prone however long they are.
+        for token in [
+            "a",
+            "short",
+            "1234567890123456",
+            "1.2e+10",
+            "worker_connector",
+        ] {
+            assert_eq!(
+                failure(&format!(
+                    "[[workers]]\nid='pod-a'\nurl='https://localhost/metrics'\nbearer_token='{token}'"
+                )),
+                "metrics bearer token is insufficiently collision resistant"
+            );
+        }
+        assert!(parse_targets(
+            "[[workers]]\nid='pod-a'\nurl='https://localhost/metrics'\nbearer_token='sufficiently-long-bearer-token'",
+            Path::new("."),
+        )
+        .is_ok());
     }
 
     #[test]

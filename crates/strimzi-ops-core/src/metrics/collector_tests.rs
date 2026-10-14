@@ -763,6 +763,148 @@ fn rereads_relative_ca_files_and_isolates_redacted_bounded_file_errors() {
 }
 
 #[test]
+fn rejects_short_tokens_before_any_request_without_echoing_them() {
+    let server = TlsMockServer::start();
+    let protected = server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200)
+            .body("kafka_connect_worker_connector_count 1\n");
+    });
+    let url = server.url("/metrics");
+    let ca = server.ca_path().display().to_string();
+    // A successful first round retains the worker identity, so the later
+    // rejection is visible on that identity without any additional request.
+    let working = TargetsFixture::new(&format!(
+        "[[workers]]\nid='pod-a'\nurl='{url}'\nca_file='{ca}'\n"
+    ));
+    let mut collector = working.collector();
+    assert_eq!(collector.collect().workers[0].state, MetricState::Available);
+    protected.assert_hits(1);
+    // `worker_connector` is 16 identifier characters and occurs in ordinary
+    // metric names; it must fail validation like the shorter forms.
+    for token in [
+        "a",
+        "short",
+        "1234567890123456",
+        "1.2e+10",
+        "worker_connector",
+    ] {
+        working.replace(&format!(
+            "[[workers]]\nid='pod-a'\nurl='{url}'\nbearer_token='{token}'\nca_file='{ca}'\n"
+        ));
+        let snapshot = collector.collect();
+        assert!(
+            snapshot.workers[0]
+                .error
+                .as_deref()
+                .is_some_and(|reason| reason.contains("collision resistant")),
+            "expected rejected token, got {snapshot:?}",
+        );
+        assert_eq!(snapshot.state, MetricState::Stale);
+        assert_lookup(
+            snapshot.lookup(
+                "pod-a",
+                "kafka_connect_worker_connector_count",
+                &BTreeMap::new(),
+            ),
+            MetricState::Stale,
+            Some(1.0),
+        );
+        // Echo absence is only textually decidable for tokens that cannot
+        // occur in ordinary exposition text: identifier-only tokens (e.g.
+        // `worker_connector`) legitimately appear inside retained metric
+        // names, which is exactly why validation rejects them.
+        let identifier_only = token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_'));
+        if !identifier_only {
+            assert!(!format!("{snapshot:?}").contains(token));
+        }
+        protected.assert_hits(1);
+    }
+    drop(working);
+    // A rejection from the very first round keeps last-known identities empty.
+    let rejected = TargetsFixture::new(&format!(
+        "[[workers]]\nid='pod-a'\nurl='{url}'\nbearer_token='a'\nca_file='{ca}'\n"
+    ));
+    let snapshot = MetricsCollector::new(Some(rejected.path.clone())).collect();
+    assert_eq!(snapshot.state, MetricState::CollectionError);
+    assert!(snapshot.workers.is_empty());
+    protected.assert_hits(1);
+}
+
+#[test]
+fn tokens_colliding_with_metric_names_and_values_still_scrape() {
+    let server = TlsMockServer::start();
+    let token = "collision-resistant-bearer-token";
+    server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200).body(format!(
+            "kafka_connect_worker_task_count{{task=\"0\"}} 1\n\
+             kafka_connect_worker_connector_count 1234567890123456\n\
+             # HELP note token {token} mentioned in HELP\n\
+             jmx_scrape_error 0"
+        ));
+    });
+    let url = server.url("/metrics");
+    let fixture = TargetsFixture::new(&targets(&[("pod-a", &url)], Some(token), server.ca_path()));
+    let mut collector = fixture.collector();
+    let snapshot = collector.collect();
+    assert_eq!(snapshot.workers[0].state, MetricState::Available);
+    assert_eq!(snapshot.workers[0].samples.len(), 2);
+}
+
+#[test]
+fn reflected_tokens_in_published_names_or_labels_fail_the_worker() {
+    let server = TlsMockServer::start();
+    let token = "private-long-bearer-token";
+    let url = server.url("/metrics");
+    let fixture = TargetsFixture::new(&targets(&[("pod-a", &url)], Some(token), server.ca_path()));
+    let mut collector = fixture.collector();
+
+    // Keep one live mock per response: identical matchers otherwise keep
+    // serving the first body, and later scenarios go unexercised.
+    let mut reflection = server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200).body(format!(
+            "kafka_connect_worker_{token} 1\njmx_scrape_error 0"
+        ));
+    });
+    let reflected = collector.collect();
+    assert_eq!(reflected.workers[0].state, MetricState::CollectionError);
+    assert!(reflected.workers[0].samples.is_empty());
+    assert!(!format!("{reflected:?}").contains(token));
+
+    reflection.delete();
+    reflection = server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200).body(format!(
+            "kafka_connect_worker_connector_count{{secret=\"{token}\"}} 123\njmx_scrape_error 0"
+        ));
+    });
+    let reflected = collector.collect();
+    assert_eq!(reflected.workers[0].state, MetricState::CollectionError);
+    assert!(reflected.workers[0].samples.is_empty());
+    assert!(!format!("{reflected:?}").contains(token));
+
+    // An accepted token cannot occur in a legal metric or label name (its
+    // non-identifier bytes are rejected by the parser), so reflecting via a
+    // name fails closed at parsing; the collector's name scans remain as a
+    // parser-charset regression guard.
+    reflection.delete();
+    server.mock(|when, then| {
+        when.method(GET).path("/metrics");
+        then.status(200).body(format!(
+            "kafka_connect_worker_connector_count{{{token}=\"reflection\"}} 123\njmx_scrape_error 0"
+        ));
+    });
+    let reflected = collector.collect();
+    assert_eq!(reflected.workers[0].state, MetricState::CollectionError);
+    assert!(reflected.workers[0].samples.is_empty());
+    assert!(!format!("{reflected:?}").contains(token));
+}
+
+#[test]
 fn plaintext_targets_are_rejected_before_any_collection() {
     for auth in ["", "\nbearer_token='private-token'"] {
         let fixture = TargetsFixture::new(&format!(

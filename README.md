@@ -185,6 +185,14 @@ Do not use a load-balanced exporter URL. Credentials/endpoints remain server-sid
 No Prometheus server or public metrics exposure is deployed. The local HTTPS
 exporter has no client authentication and remains reachable by in-cluster pods
 under Strimzi's default metrics NetworkPolicy; TLS is not an authorization boundary.
+Bearer tokens must be real credentials, documented as private environment
+tokens: at least 16 characters, never made only of numeric exposition
+characters (`0-9eE+-.`, which can appear in ordinary metric values), and
+never made only of identifier characters (`A-Za-z0-9_`, which occur in
+ordinary metric and label names). Generate random base64/UUID-style secrets,
+not words that appear in exported names or values. Target validation rejects
+insufficient tokens before any request; reflection checks reject responses
+whose published samples carry the credential.
 
 Collection runs server-side with a 3-second request timeout and a 10-second
 interval **after each round**; browser refreshes use cached results. Successful

@@ -277,18 +277,32 @@ fn scrape(http: &Client, target: &Target) -> ScrapeResult {
         return Err("metrics response exceeds size limit");
     }
     let text = std::str::from_utf8(&bytes).map_err(|_| "cannot decode metrics response")?;
+    let mut samples = parse_prometheus(text).map_err(|_| "cannot parse metrics response")?;
     // Do not publish a malicious exporter's reflection of private configuration.
-    if text.contains(target.url.as_str())
-        || target
-            .authorization
-            .as_ref()
-            .and_then(|authorization| authorization.to_str().ok())
-            .and_then(|authorization| authorization.strip_prefix("Bearer "))
-            .is_some_and(|token| text.contains(token))
+    // Validation guarantees an accepted token can occur neither in ordinary
+    // sample values nor in legal metric/label names, so any match here is a
+    // deliberate reflection (or a parser-charset regression, also fail-closed).
+    if let Some(token) = target
+        .authorization
+        .as_ref()
+        .and_then(|authorization| authorization.to_str().ok())
+        .and_then(|authorization| authorization.strip_prefix("Bearer "))
     {
+        let reflected = samples.iter().any(|sample| {
+            sample.name.contains(token)
+                || sample
+                    .labels
+                    .iter()
+                    .any(|(name, value)| name.contains(token) || value.contains(token))
+        });
+        if reflected {
+            return Err("cannot publish credential-bearing metrics response");
+        }
+    }
+    // Do not publish a hostile exporter's reflection of the private endpoint.
+    if text.contains(target.url.as_str()) {
         return Err("cannot publish credential-bearing metrics response");
     }
-    let mut samples = parse_prometheus(text).map_err(|_| "cannot parse metrics response")?;
     if samples.iter().any(|sample| {
         sample.name == "jmx_scrape_error" && (!sample.value.is_finite() || sample.value.abs() > 0.0)
     }) {

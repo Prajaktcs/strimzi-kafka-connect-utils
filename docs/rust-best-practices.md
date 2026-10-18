@@ -79,6 +79,11 @@ Binary crates (`strimzi-ops`, `strimzi-ui`): define `Error` in `error.rs` and `R
 
 Default UI is `just run` / `just ui` (`strimzi-ui`). Monitor streams a duration-bounded Kafka consume session over SSE, with one consumer group per connection; disconnecting cancels consumption. Control Logs uses `kubectl` on `PATH`.
 
+Dashboard and Control borrow connector status JSON and task slices only inside
+the blocking projection closure; returned view rows own their display data.
+Missing status remains `UNKNOWN`, and absent or non-array tasks remain empty.
+Control reads connector type from `status/type`; Dashboard reads `info/type`.
+
 Connect/Debezium metrics live in `strimzi-ops-core::metrics`: a synchronous,
 bounded per-worker collector and Prometheus parser with explicit availability
 states. The UI owns one application-wide collector, executes each round with

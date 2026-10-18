@@ -43,7 +43,7 @@ fn build_control_page(
     let all = client.get_all_connectors_status()?;
     let mut connectors = Vec::new();
     for (name, info) in all {
-        let status = info.get("status").cloned().unwrap_or(Value::Null);
+        let status = info.get("status").unwrap_or(&Value::Null);
         let state = status
             .pointer("/connector/state")
             .and_then(Value::as_str)
@@ -52,7 +52,7 @@ fn build_control_page(
         let tasks = status
             .get("tasks")
             .and_then(Value::as_array)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
         let tasks_running = tasks
             .iter()

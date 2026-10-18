@@ -266,6 +266,104 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn project_dashboard_from_borrowed_status() {
+        let server = httpmock::MockServer::start();
+        let cluster = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/");
+            then.status(200).json_body(json!({"version": "test"}));
+        });
+        let plugins = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/connector-plugins");
+            then.status(200).json_body(json!([]));
+        });
+        let inventory = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/connectors");
+            then.status(200).json_body(json!({
+                "zeta-sink": {
+                    "status": {
+                        "type": "sink",
+                        "connector": {"state": "RUNNING"},
+                        "tasks": [
+                            {"id": 0, "state": "RUNNING"},
+                            {"id": 1, "state": "FAILED", "trace": "boom"}
+                        ]
+                    },
+                    "info": {"type": "sink"}
+                },
+                "alpha-source": {
+                    "status": {
+                        "type": "source",
+                        "connector": {"state": "FAILED", "trace": "connector down"}
+                    },
+                    "info": {"type": "source"}
+                },
+                // Dashboard reads info/type, so a missing status keeps the type.
+                "missing-status": {"info": {"type": "source"}}
+            }));
+        });
+        let client = strimzi_ops_core::ConnectClient::new(&server.base_url()).unwrap();
+        let (page, _) = build_dashboard(&client, None).unwrap();
+
+        let m = &page.metrics;
+        assert_eq!(
+            (
+                m.total_connectors,
+                m.running_connectors,
+                m.failed_connectors,
+                m.running_tasks,
+                m.total_tasks
+            ),
+            (3, 1, 1, 1, 2)
+        );
+        let distribution: Vec<_> = page
+            .status_distribution
+            .iter()
+            .map(|s| (s.state.as_str(), s.count))
+            .collect();
+        assert_eq!(
+            distribution,
+            [("FAILED", 1), ("RUNNING", 1), ("UNKNOWN", 1)]
+        );
+        let failures: Vec<_> = page
+            .failures
+            .iter()
+            .map(|f| (f.name.as_str(), f.kind.as_str(), f.error.as_str()))
+            .collect();
+        assert_eq!(
+            failures,
+            [
+                ("alpha-source", "Connector", "connector down"),
+                ("zeta-sink (Task 1)", "Task", "boom"),
+            ]
+        );
+        let rows: Vec<_> = page
+            .connectors
+            .iter()
+            .map(|c| {
+                (
+                    c.name.as_str(),
+                    c.connector_type.as_str(),
+                    c.state.as_str(),
+                    c.tasks_running,
+                    c.tasks_total,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("alpha-source", "source", "FAILED", 0, 0),
+                ("missing-status", "source", "UNKNOWN", 0, 0),
+                ("zeta-sink", "sink", "RUNNING", 1, 2),
+            ]
+        );
+        cluster.assert();
+        plugins.assert();
+        inventory.assert();
+    }
+
     fn snapshot(state: MetricState, errors: f64) -> Arc<MetricsSnapshot> {
         let labels = BTreeMap::from([
             ("connector".to_owned(), "orders".to_owned()),

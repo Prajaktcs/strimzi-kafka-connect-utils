@@ -299,3 +299,70 @@ fn urlencoding_encode(input: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn project_control_rows_from_borrowed_status() {
+        let server = httpmock::MockServer::start();
+        let inventory = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/connectors");
+            then.status(200).json_body(json!({
+                "zeta-sink": {
+                    "status": {
+                        "type": "sink",
+                        "connector": {"state": "RUNNING"},
+                        "tasks": [
+                            {"id": 0, "state": "RUNNING"},
+                            {"id": 1, "state": "FAILED", "trace": "boom"}
+                        ]
+                    },
+                    "info": {"type": "sink"}
+                },
+                "alpha-source": {
+                    "status": {"type": "source", "connector": {"state": "FAILED"}},
+                    "info": {"type": "source"}
+                },
+                // Control reads status/type, so info/type alone is not a source.
+                "missing-status": {"info": {"type": "source"}}
+            }));
+        });
+        let client = ConnectClient::new(&server.base_url()).unwrap();
+        let page = build_control_page(
+            &client,
+            ControlQuery {
+                flash: None,
+                focus: Some("zeta-sink".to_owned()),
+            },
+        )
+        .unwrap();
+
+        let rows: Vec<_> = page
+            .connectors
+            .iter()
+            .map(|row| {
+                (
+                    row.name.as_str(),
+                    row.state.as_str(),
+                    row.tasks_running,
+                    row.tasks_total,
+                    row.focused,
+                    row.is_source,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("alpha-source", "FAILED", 0, 0, false, true),
+                ("missing-status", "UNKNOWN", 0, 0, false, false),
+                ("zeta-sink", "RUNNING", 1, 2, true, false),
+            ]
+        );
+        inventory.assert();
+    }
+}

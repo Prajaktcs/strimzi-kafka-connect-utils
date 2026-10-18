@@ -55,7 +55,7 @@ fn build_dashboard(
     let mut connectors = Vec::new();
 
     for (name, info) in &all {
-        let status = info.get("status").cloned().unwrap_or(Value::Null);
+        let status = info.get("status").unwrap_or(&Value::Null);
         let connector_state = status
             .pointer("/connector/state")
             .and_then(Value::as_str)
@@ -77,11 +77,11 @@ fn build_dashboard(
         let tasks = status
             .get("tasks")
             .and_then(Value::as_array)
-            .cloned()
+            .map(Vec::as_slice)
             .unwrap_or_default();
         total_tasks += tasks.len();
         let mut tasks_running = 0usize;
-        for task in &tasks {
+        for task in tasks {
             if task.get("state").and_then(Value::as_str) == Some("RUNNING") {
                 running_tasks += 1;
                 tasks_running += 1;

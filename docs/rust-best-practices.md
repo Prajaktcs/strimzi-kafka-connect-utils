@@ -98,3 +98,7 @@ validation. Duplicate series are unavailable even on failed workers; other
 missing or invalid series on failed workers remain collection errors. Only
 available or stale readings retain values. Projection identities, ownership,
 ordering, and derived measurements remain specific to each projection.
+Backpressure projections construct each identity/worker row once; ambiguous
+ownership short-circuits measurement lookup to unavailable before worker-state
+handling, including derived utilization. Unambiguous rows retain normal lookup
+semantics, including collection errors for source consumer lag on failed workers.

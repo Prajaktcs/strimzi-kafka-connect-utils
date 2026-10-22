@@ -271,69 +271,39 @@ pub fn debezium_queues(snapshot: &MetricsSnapshot) -> Vec<DebeziumQueue> {
         .into_iter()
         .flat_map(|(identity, workers)| {
             let ambiguous = workers.len() > 1;
-            let (connector, task, domain, server, context) = (
-                identity.connector,
-                identity.task,
-                identity.domain,
-                identity.server,
-                identity.context,
-            );
-            workers.into_values().map(move |inventory| {
-                queue_row(
-                    connector, task, domain, server, context, ambiguous, inventory,
-                )
-            })
+            workers
+                .into_values()
+                .map(move |inventory| queue_row(identity, ambiguous, inventory))
         })
         .collect()
 }
 
 /// One projected queue row; ambiguous ownership keeps identity without values.
 fn queue_row(
-    connector: &str,
-    task: &str,
-    domain: &str,
-    server: &str,
-    context: &str,
+    identity: DebeziumIdentity<'_>,
     ambiguous: bool,
     inventory: QueueInventory<'_>,
 ) -> DebeziumQueue {
     let QueueInventory { worker, series } = inventory;
-    let identity = (
-        connector.to_owned(),
-        task.to_owned(),
-        domain.to_owned(),
-        server.to_owned(),
-        context.to_owned(),
-        worker.worker.clone(),
-    );
-    if ambiguous {
-        return DebeziumQueue {
-            connector: identity.0,
-            task: identity.1,
-            server: identity.3,
-            context: identity.4,
-            worker: identity.5,
-            domain: identity.2,
-            total_capacity: absent(MetricState::Unavailable),
-            remaining_capacity: absent(MetricState::Unavailable),
-            utilization: absent(MetricState::Unavailable),
-            max_queue_bytes: absent(MetricState::Unavailable),
-            current_queue_bytes: absent(MetricState::Unavailable),
-            bytes_utilization: absent(MetricState::Unavailable),
-        };
-    }
-    let total_capacity = series[QUEUE_TOTAL_CAPACITY].lookup(worker, false, 4);
-    let remaining_capacity = series[QUEUE_REMAINING_CAPACITY].lookup(worker, false, 4);
+    let lookup = |series: Series<'_>| {
+        if ambiguous {
+            absent(MetricState::Unavailable)
+        } else {
+            series.lookup(worker, false, 4)
+        }
+    };
+    let total_capacity = lookup(series[QUEUE_TOTAL_CAPACITY]);
+    let remaining_capacity = lookup(series[QUEUE_REMAINING_CAPACITY]);
     let queued = queued_share(total_capacity, remaining_capacity);
-    let max_queue_bytes = series[QUEUE_MAX_BYTES].lookup(worker, false, 4);
-    let current_queue_bytes = series[QUEUE_CURRENT_BYTES].lookup(worker, false, 4);
+    let max_queue_bytes = lookup(series[QUEUE_MAX_BYTES]);
+    let current_queue_bytes = lookup(series[QUEUE_CURRENT_BYTES]);
     DebeziumQueue {
-        connector: identity.0,
-        task: identity.1,
-        server: identity.3,
-        context: identity.4,
-        worker: identity.5,
-        domain: identity.2,
+        connector: identity.connector.to_owned(),
+        task: identity.task.to_owned(),
+        server: identity.server.to_owned(),
+        context: identity.context.to_owned(),
+        worker: worker.worker.clone(),
+        domain: identity.domain.to_owned(),
         total_capacity,
         remaining_capacity,
         utilization: utilization(total_capacity, queued),
@@ -426,27 +396,22 @@ pub fn connect_backpressure(snapshot: &MetricsSnapshot) -> Vec<ConnectBackpressu
                     series,
                     lag,
                 } = inventory;
-                if ambiguous {
-                    return ConnectBackpressure {
-                        connector: connector.to_owned(),
-                        task: task.to_owned(),
-                        worker: worker.worker.clone(),
-                        kind,
-                        active_records: absent(MetricState::Unavailable),
-                        active_records_max: absent(MetricState::Unavailable),
-                        active_records_avg: absent(MetricState::Unavailable),
-                        consumer_lag_max: absent(MetricState::Unavailable),
-                    };
-                }
+                let lookup = |series: Series<'_>| {
+                    if ambiguous {
+                        absent(MetricState::Unavailable)
+                    } else {
+                        series.lookup(worker, false, 2)
+                    }
+                };
                 ConnectBackpressure {
                     connector: connector.to_owned(),
                     task: task.to_owned(),
                     worker: worker.worker.clone(),
                     kind,
-                    active_records: series[0].lookup(worker, false, 2),
-                    active_records_max: series[1].lookup(worker, false, 2),
-                    active_records_avg: series[2].lookup(worker, false, 2),
-                    consumer_lag_max: lag.lookup(worker, false, 2),
+                    active_records: lookup(series[0]),
+                    active_records_max: lookup(series[1]),
+                    active_records_avg: lookup(series[2]),
+                    consumer_lag_max: lookup(lag),
                 }
             })
         })

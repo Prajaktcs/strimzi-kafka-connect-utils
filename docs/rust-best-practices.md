@@ -104,3 +104,8 @@ readings through the same private formatter. Expiration marks available readings
 stale while retaining their values; unavailable and collection-error labels stay
 unchanged. Counts use integer precision, ratios and averages use two decimals,
 and positive values below 0.01 use scientific notation at two-decimal precision.
+
+Backpressure projections construct each identity/worker row once; ambiguous
+ownership short-circuits measurement lookup to unavailable before worker-state
+handling, including derived utilization. Unambiguous rows retain normal lookup
+semantics, including collection errors for source consumer lag on failed workers.

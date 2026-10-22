@@ -223,19 +223,62 @@ fn duplicate_series_do_not_choose_a_winner() {
 
 #[test]
 fn duplicate_worker_ownership_invalidates_readings_but_keeps_rows() {
-    let text = queue_set(STREAMING, "2048", "1024", "", "");
-    let rows = queues(vec![
-        worker("worker-a", MetricState::Available, &text),
-        worker("worker-b", MetricState::Available, &text),
-    ]);
-    assert_eq!(rows.len(), 2);
-    for row in &rows {
-        assert_eq!(row.total_capacity, absent(MetricState::Unavailable));
-        assert_eq!(row.utilization, absent(MetricState::Unavailable));
-    }
-    let names: [&str; 2] = ["worker-a", "worker-b"];
-    for (row, name) in rows.iter().zip(names) {
-        assert_eq!(row.worker, name);
+    let text = queue_set(STREAMING, "2048", "1024", "1000", "250");
+    for state in [
+        MetricState::Available,
+        MetricState::Stale,
+        MetricState::CollectionError,
+    ] {
+        let rows = queues(vec![
+            worker("worker-b", state, &text),
+            worker("worker-a", MetricState::Available, &text),
+        ]);
+        let identities: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.connector.as_str(),
+                    row.task.as_str(),
+                    row.domain.as_str(),
+                    row.server.as_str(),
+                    row.context.as_str(),
+                    row.worker.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            identities,
+            vec![
+                (
+                    "postgres-source-connector",
+                    "0",
+                    "postgres",
+                    "lakehouse",
+                    "streaming",
+                    "worker-a",
+                ),
+                (
+                    "postgres-source-connector",
+                    "0",
+                    "postgres",
+                    "lakehouse",
+                    "streaming",
+                    "worker-b",
+                ),
+            ]
+        );
+        for row in &rows {
+            for reading in [
+                row.total_capacity,
+                row.remaining_capacity,
+                row.utilization,
+                row.max_queue_bytes,
+                row.current_queue_bytes,
+                row.bytes_utilization,
+            ] {
+                assert_eq!(reading, absent(MetricState::Unavailable));
+            }
+        }
     }
 }
 
@@ -401,16 +444,54 @@ fn connect_dimensions_duplicates_ownership_and_untagged_samples() {
         Some(3400.0),
     );
 
-    // Duplicate worker ownership invalidates every reading but keeps rows.
-    let text = sink_set(SINK, "12", "120", "15", "3400");
-    let rows = actives(vec![
-        worker("worker-a", MetricState::Available, &text),
-        worker("worker-b", MetricState::Available, &text),
-    ]);
-    assert_eq!(rows.len(), 2);
-    for row in &rows {
-        assert_eq!(row.active_records, absent(MetricState::Unavailable));
-        assert_eq!(row.consumer_lag_max, absent(MetricState::Unavailable));
+    // Duplicate ownership takes precedence even over a failed worker.
+    for text in [
+        source_set(SOURCE, "3", "9", "2.5"),
+        sink_set(SINK, "12", "120", "15", "3400"),
+    ] {
+        for state in [
+            MetricState::Available,
+            MetricState::Stale,
+            MetricState::CollectionError,
+        ] {
+            let rows = actives(vec![
+                worker("worker-b", state, &text),
+                worker("worker-a", MetricState::Available, &text),
+            ]);
+            let identities: Vec<_> = rows
+                .iter()
+                .map(|row| {
+                    (
+                        row.kind,
+                        row.connector.as_str(),
+                        row.task.as_str(),
+                        row.worker.as_str(),
+                    )
+                })
+                .collect();
+            let (kind, connector) = if text.starts_with(SOURCE_TASK_PREFIX) {
+                (TaskKind::Source, "source-connector")
+            } else {
+                (TaskKind::Sink, "sink-connector")
+            };
+            assert_eq!(
+                identities,
+                vec![
+                    (kind, connector, "0", "worker-a"),
+                    (kind, connector, "0", "worker-b"),
+                ]
+            );
+            for row in &rows {
+                for reading in [
+                    row.active_records,
+                    row.active_records_max,
+                    row.active_records_avg,
+                    row.consumer_lag_max,
+                ] {
+                    assert_eq!(reading, absent(MetricState::Unavailable));
+                }
+            }
+        }
     }
 
     // A family sample without both core labels builds no identity at all.

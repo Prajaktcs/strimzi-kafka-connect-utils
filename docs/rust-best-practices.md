@@ -98,3 +98,9 @@ validation. Duplicate series are unavailable even on failed workers; other
 missing or invalid series on failed workers remain collection errors. Only
 available or stale readings retain values. Projection identities, ownership,
 ordering, and derived measurements remain specific to each projection.
+
+Monitor streaming, snapshot, queue, and active-record views format numeric
+readings through the same private formatter. Expiration marks available readings
+stale while retaining their values; unavailable and collection-error labels stay
+unchanged. Counts use integer precision, ratios and averages use two decimals,
+and positive values below 0.01 use scientific notation at two-decimal precision.

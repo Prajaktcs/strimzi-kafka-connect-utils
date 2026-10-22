@@ -321,12 +321,16 @@ impl QueueBackpressureView {
             domain: queue.domain,
             server: queue.server,
             context: queue.context,
-            total_capacity: format_queue_measure(queue.total_capacity, expired, 0),
-            remaining_capacity: format_queue_measure(queue.remaining_capacity, expired, 0),
-            utilization: format_queue_measure(queue.utilization, expired, 2),
-            max_queue_bytes: format_queue_measure(queue.max_queue_bytes, expired, 0),
-            current_queue_bytes: format_queue_measure(queue.current_queue_bytes, expired, 0),
-            bytes_utilization: format_queue_measure(queue.bytes_utilization, expired, 2),
+            total_capacity: format_streaming_measurement(queue.total_capacity, expired, 0),
+            remaining_capacity: format_streaming_measurement(queue.remaining_capacity, expired, 0),
+            utilization: format_streaming_measurement(queue.utilization, expired, 2),
+            max_queue_bytes: format_streaming_measurement(queue.max_queue_bytes, expired, 0),
+            current_queue_bytes: format_streaming_measurement(
+                queue.current_queue_bytes,
+                expired,
+                0,
+            ),
+            bytes_utilization: format_streaming_measurement(queue.bytes_utilization, expired, 2),
         }
     }
 }
@@ -349,17 +353,12 @@ impl ConnectBackpressureView {
             task: active.task,
             worker: active.worker,
             kind: active.kind.label(),
-            active_records: format_queue_measure(active.active_records, expired, 0),
-            active_records_max: format_queue_measure(active.active_records_max, expired, 0),
-            active_records_avg: format_queue_measure(active.active_records_avg, expired, 2),
-            consumer_lag_max: format_queue_measure(active.consumer_lag_max, expired, 0),
+            active_records: format_streaming_measurement(active.active_records, expired, 0),
+            active_records_max: format_streaming_measurement(active.active_records_max, expired, 0),
+            active_records_avg: format_streaming_measurement(active.active_records_avg, expired, 2),
+            consumer_lag_max: format_streaming_measurement(active.consumer_lag_max, expired, 0),
         }
     }
-}
-
-/// Expire and format one backpressure measurement like the streaming panel.
-fn format_queue_measure(measurement: MetricLookup, expired: bool, precision: usize) -> String {
-    format_streaming_measurement(expire_lookup(measurement, expired), false, precision)
 }
 
 /// Bound Debezium queue rows only after projecting the complete snapshot.

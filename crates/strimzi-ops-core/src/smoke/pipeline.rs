@@ -238,6 +238,8 @@ impl Pipeline {
         require_config(&source, "database.hostname", "postgres")?;
         require_config(&source, "database.dbname", "source_db")?;
         require_config(&sink, "iceberg.catalog.uri", "http://rustfs:9000/iceberg")?;
+        require_worker_bootstrap(&source, "producer.override.bootstrap.servers")?;
+        require_worker_bootstrap(&sink, "iceberg.kafka.bootstrap.servers")?;
         self.postgres("postgres-prerequisite", "SELECT 1;")?;
         self.duckdb("duckdb-prerequisite", "SELECT count(*) AS namespaces FROM information_schema.schemata WHERE catalog_name='rustfs';")?;
         let cluster = self.kubectl(
@@ -677,6 +679,15 @@ fn source_slot_ready(text: &str) -> bool {
             .is_some_and(|lsn| !lsn.is_empty())
 }
 
+fn require_worker_bootstrap(template: &Value, key: &str) -> Result<()> {
+    if template["spec"]["config"].get(key).is_some() {
+        return Err(assertion(format!(
+            "sample setting {key} must be absent; smoke clients must use the verified worker Kafka cluster"
+        )));
+    }
+    Ok(())
+}
+
 fn require_config(template: &Value, key: &str, expected: &str) -> Result<()> {
     if template["spec"]["config"][key].as_str() != Some(expected) {
         return Err(assertion(format!(
@@ -790,6 +801,25 @@ mod tests {
         assert!(source_slot_ready(
             r#"{"active":true,"confirmed_flush_lsn":"0/123"}"#
         ));
+    }
+
+    #[test]
+    fn rejects_template_destinations_outside_verified_worker_cluster() {
+        for key in [
+            "producer.override.bootstrap.servers",
+            "iceberg.kafka.bootstrap.servers",
+        ] {
+            assert!(require_worker_bootstrap(&json!({"spec":{"config":{}}}), key).is_ok());
+            for value in [
+                json!("other-cluster:9092"),
+                json!("${env:BROKERS}"),
+                Value::Null,
+            ] {
+                let mut template = json!({"spec":{"config":{}}});
+                template["spec"]["config"][key] = value;
+                assert!(require_worker_bootstrap(&template, key).is_err());
+            }
+        }
     }
 
     #[test]

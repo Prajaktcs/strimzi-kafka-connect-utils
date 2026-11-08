@@ -104,6 +104,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: SnapshotCommands,
     },
+    /// Run isolated end-to-end local-stack verification
+    Smoke {
+        #[command(subcommand)]
+        command: SmokeCommands,
+    },
     /// Monitor Debezium notification topics
     Monitor {
         #[arg(long = "topic", default_value = "debezium.notifications")]
@@ -178,6 +183,20 @@ pub enum SnapshotCommands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum SmokeCommands {
+    /// Prove `PostgreSQL` CDC, exact sink backlog/recovery and durable Iceberg rows
+    Pipeline {
+        #[arg(long, default_value = "kafka")]
+        namespace: String,
+        #[arg(long, default_value = ".local/smoke")]
+        evidence_root: PathBuf,
+        /// Deadline for each wait phase (30–900 seconds)
+        #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(30..=900))]
+        phase_timeout_secs: u64,
+    },
+}
+
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
 pub enum FormatArg {
     #[default]
@@ -244,6 +263,30 @@ pub fn run_ops(cli: Cli) -> Result<ExitCode> {
             )?;
             let client = ConnectClient::new(settings.require_connect_url()?)?;
             snapshot_command(&client, command, &settings)
+        }
+        Commands::Smoke {
+            command:
+                SmokeCommands::Pipeline {
+                    namespace,
+                    evidence_root,
+                    phase_timeout_secs,
+                },
+        } => {
+            let settings = load_settings(
+                secrets.as_deref(),
+                connect_url,
+                bootstrap_servers,
+                cluster_name,
+            )?;
+            let report =
+                strimzi_ops_core::smoke::run_pipeline(strimzi_ops_core::smoke::PipelineOptions {
+                    settings,
+                    namespace,
+                    evidence_root,
+                    phase_timeout: Duration::from_secs(phase_timeout_secs),
+                })?;
+            print_json(&report)?;
+            Ok(ExitCode::SUCCESS)
         }
         Commands::Monitor {
             topic,

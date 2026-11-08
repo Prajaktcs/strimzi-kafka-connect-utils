@@ -329,6 +329,10 @@ local PostgreSQL (`postgres-0`, `source_db`), broker
 it does not retarget an arbitrary production stack. Namespace defaults to `kafka`
 (`--namespace`); Connect/Kafka host defaults are `127.0.0.1:8083`/`:9092`
 unless overridden by existing connection settings.
+Templates with `producer.override.bootstrap.servers` or
+`iceberg.kafka.bootstrap.servers` are rejected before mutations, even when they
+appear to name the same cluster. Smoke writers must use the verified worker
+cluster rather than an independently configured destination.
 
 Each run gets a UUID-based source table, cloned Debezium source with its own
 replication slot and filtered publication, two-partition input topic, cloned

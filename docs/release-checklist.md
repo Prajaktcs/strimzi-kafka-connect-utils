@@ -45,8 +45,9 @@ remain explicitly unavailable, never silently approximated.
 
 The CI workflow can also be run manually from GitHub Actions. A manual run applies
 the normal gates, tests the no-Kafka core, builds optimized binaries, and uploads
-Linux binaries as a verification artifact. It does not create a release, run a
-Kubernetes pipeline, or certify configurations that were not exercised.
+Linux binaries in a tar archive, preserving executable permissions after
+extraction. It does not create a release, run a Kubernetes pipeline, or certify
+configurations that were not exercised.
 
 ## Rollback and resource safety
 

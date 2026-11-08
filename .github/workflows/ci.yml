@@ -65,14 +65,15 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: cargo build --release --workspace --all-features
 
+      - name: Package release checkpoint
+        if: github.event_name == 'workflow_dispatch'
+        run: tar -czf strimzi-ops-linux-x86_64.tar.gz -C target/release strimzi-ops strimzi-lint strimzi-ui
+
       - name: Upload release checkpoint binaries
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: strimzi-ops-linux-x86_64-${{ github.sha }}
-          path: |
-            target/release/strimzi-ops
-            target/release/strimzi-lint
-            target/release/strimzi-ui
+          path: strimzi-ops-linux-x86_64.tar.gz
           if-no-files-found: error
           retention-days: 14

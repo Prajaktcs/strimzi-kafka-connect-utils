@@ -192,7 +192,6 @@ release-check: rust-check rust-test
     cargo test -p strimzi-ops-core --no-default-features
     cargo build --release --workspace --all-features
     for file in examples/*.yaml examples/*.yml examples/*.json; do if [[ -f "$file" ]]; then target/release/strimzi-lint lint "$file"; fi; done
-
 # Run workspace tests (alias for rust-test)
 test: rust-test
 

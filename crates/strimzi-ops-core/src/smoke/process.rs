@@ -102,14 +102,17 @@ impl Runner {
         let prefix = format!("{:04}-{label}", self.sequence);
         let stdout = self.directory.join(format!("{prefix}.stdout"));
         let stderr = self.directory.join(format!("{prefix}.stderr"));
+        let stdin = if let Some(input) = input {
+            let path = self.directory.join(format!("{prefix}.stdin"));
+            save(&path, input.as_bytes())?;
+            Stdio::from(File::open(&path).map_err(|source| Error::Evidence { path, source })?)
+        } else {
+            Stdio::null()
+        };
         let deadline = Instant::now() + timeout;
         let mut child = Command::new(program)
             .args(args)
-            .stdin(if input.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
+            .stdin(stdin)
             .stdout(private_file(&stdout)?)
             .stderr(private_file(&stderr)?)
             .spawn()
@@ -117,17 +120,6 @@ impl Runner {
                 program: program.to_owned(),
                 source,
             })?;
-        if let (Some(input), Some(mut pipe)) = (input, child.stdin.take()) {
-            // Smoke inputs are bounded SQL statements or one connector manifest.
-            if pipe.write_all(input.as_bytes()).is_err() {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Error::Command {
-                    label: label.to_owned(),
-                    evidence: self.directory.clone(),
-                });
-            }
-        }
         loop {
             match child.try_wait() {
                 Ok(Some(status)) if status.success() => break,
@@ -154,5 +146,25 @@ impl Runner {
             path: stdout,
             source,
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enforces_deadline_when_child_never_reads_maximum_input() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runner = Runner::new(directory.path().join("evidence")).unwrap();
+        let input = "x".repeat(8192);
+        let result = runner.command(
+            "unread-input",
+            "sh",
+            &["-c", "exec sleep 5"],
+            Some(&input),
+            Duration::from_millis(100),
+        );
+        assert!(matches!(result, Err(Error::Timeout { .. })));
     }
 }

@@ -267,7 +267,9 @@ impl Pipeline {
         if prerequisite.error.is_some()
             || prerequisite.connectors.is_empty()
             || prerequisite.connectors.iter().any(|row| {
-                row.state == MetricState::CollectionError || row.state == MetricState::Stale
+                row.state == MetricState::CollectionError
+                    || row.state == MetricState::Stale
+                    || (row.error.is_some() && row.partitions.is_empty())
             })
         {
             return Err(assertion("host sink-lag collection failed; check Kafka forward, advertised listener and sink-lag security settings"));
@@ -498,7 +500,7 @@ impl Pipeline {
     fn wait_source_slot(&mut self) -> Result<()> {
         let deadline = Instant::now() + self.options.phase_timeout;
         let query = format!(
-            "SELECT active FROM pg_replication_slots WHERE slot_name='{}' AND database='source_db';",
+            "SELECT active AND confirmed_flush_lsn IS NOT NULL FROM pg_replication_slots WHERE slot_name='{}' AND database='source_db';",
             self.report.slot
         );
         loop {

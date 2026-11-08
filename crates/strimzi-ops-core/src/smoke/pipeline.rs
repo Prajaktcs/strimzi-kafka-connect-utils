@@ -458,7 +458,9 @@ impl Pipeline {
         };
         let deadline = Instant::now() + self.options.phase_timeout;
         loop {
-            if let Ok(status) = self.client.get_connector_status(name) {
+            if let Ok(status) = poll_before_deadline(deadline, "connector state", || {
+                self.client.get_connector_status(name)
+            })? {
                 if status.pointer("/connector/state").and_then(Value::as_str) == Some(expected)
                     && status
                         .get("tasks")
@@ -500,13 +502,16 @@ impl Pipeline {
     fn wait_source_slot(&mut self) -> Result<()> {
         let deadline = Instant::now() + self.options.phase_timeout;
         let query = format!(
-            "SELECT active AND confirmed_flush_lsn IS NOT NULL FROM pg_replication_slots WHERE slot_name='{}' AND database='source_db';",
+            "SELECT json_build_object('active', active, 'confirmed_flush_lsn', confirmed_flush_lsn::text) FROM pg_replication_slots WHERE slot_name='{}' AND database='source_db';",
             self.report.slot
         );
         loop {
             // RUNNING is reported before Debezium necessarily starts replication.
             // With no_data snapshots, inserts before slot creation can be missed.
-            if self.postgres("source-slot-ready", &query)?.trim() == "t" {
+            let slot = poll_before_deadline(deadline, "source replication slot", || {
+                self.postgres("source-slot-ready", &query)
+            })??;
+            if source_slot_ready(&slot) {
                 return Ok(());
             }
             if Instant::now() >= deadline {
@@ -536,7 +541,7 @@ impl Pipeline {
         let deadline = Instant::now() + self.options.phase_timeout;
         let mut attempt = 0_u32;
         loop {
-            let snapshot = self.collector.collect();
+            let snapshot = poll_before_deadline(deadline, label, || self.collector.collect())?;
             attempt += 1;
             let measured = snapshot
                 .connectors
@@ -633,7 +638,8 @@ impl Pipeline {
             self.report.iceberg_table
         );
         loop {
-            if let Ok(text) = self.duckdb(label, &query) {
+            if let Ok(text) = poll_before_deadline(deadline, label, || self.duckdb(label, &query))?
+            {
                 if let Some(rows) = final_json_result(&text) {
                     if exact_rows(&rows, count) {
                         save_json(&self.runner, &format!("{label}-verified.json"), &rows)?;
@@ -647,6 +653,28 @@ impl Pipeline {
             thread::sleep(POLL_INTERVAL);
         }
     }
+}
+
+fn poll_before_deadline<T>(deadline: Instant, label: &str, poll: impl FnOnce() -> T) -> Result<T> {
+    if Instant::now() >= deadline {
+        return Err(assertion(format!("{label}: poll phase deadline exceeded")));
+    }
+    let result = poll();
+    if Instant::now() >= deadline {
+        return Err(assertion(format!("{label}: poll phase deadline exceeded")));
+    }
+    Ok(result)
+}
+
+fn source_slot_ready(text: &str) -> bool {
+    let Ok(slot) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    slot.get("active").and_then(Value::as_bool) == Some(true)
+        && slot
+            .get("confirmed_flush_lsn")
+            .and_then(Value::as_str)
+            .is_some_and(|lsn| !lsn.is_empty())
 }
 
 fn require_config(template: &Value, key: &str, expected: &str) -> Result<()> {
@@ -747,6 +775,38 @@ fn exact_rows(value: &Value, count: u64) -> bool {
 mod tests {
     use super::*;
     use crate::metrics::PartitionLag;
+
+    #[test]
+    fn source_readiness_rejects_absent_inactive_and_initializing_slots() {
+        for response in [
+            "",
+            r#"{"active":false,"confirmed_flush_lsn":null}"#,
+            r#"{"active":false,"confirmed_flush_lsn":"0/123"}"#,
+            r#"{"active":true,"confirmed_flush_lsn":null}"#,
+            r#"{"active":true,"confirmed_flush_lsn":""}"#,
+        ] {
+            assert!(!source_slot_ready(response));
+        }
+        assert!(source_slot_ready(
+            r#"{"active":true,"confirmed_flush_lsn":"0/123"}"#
+        ));
+    }
+
+    #[test]
+    fn deadline_prevents_new_polls_and_rejects_late_success() {
+        let mut called = false;
+        let expired = poll_before_deadline(Instant::now(), "expired", || {
+            called = true;
+            true
+        });
+        assert!(expired.is_err());
+        assert!(!called);
+        let late = poll_before_deadline(Instant::now() + Duration::from_millis(50), "late", || {
+            thread::sleep(Duration::from_millis(100));
+            true
+        });
+        assert!(late.is_err());
+    }
 
     #[test]
     fn reads_final_duckdb_result_without_accepting_truncated_or_intermediate_rows() {

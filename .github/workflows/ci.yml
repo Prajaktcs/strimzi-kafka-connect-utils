@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 # CI only needs repository read access; leave all other token permissions disabled.
 permissions:
@@ -48,6 +49,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --all-features
 
+      - name: Test core without Kafka
+        run: cargo test -p strimzi-ops-core --no-default-features
+
       - name: Lint example connectors
         run: |
           set -euo pipefail
@@ -56,3 +60,20 @@ jobs:
             echo "Linting $file..."
             cargo run -q -p strimzi-ops --bin strimzi-lint -- lint "$file"
           done
+
+      - name: Build release checkpoint
+        if: github.event_name == 'workflow_dispatch'
+        run: cargo build --release --workspace --all-features
+
+      - name: Package release checkpoint
+        if: github.event_name == 'workflow_dispatch'
+        run: tar -czf strimzi-ops-linux-x86_64.tar.gz -C target/release strimzi-ops strimzi-lint strimzi-ui
+
+      - name: Upload release checkpoint binaries
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: strimzi-ops-linux-x86_64-${{ github.sha }}
+          path: strimzi-ops-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14

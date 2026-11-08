@@ -187,6 +187,11 @@ connectors-list connect_url="http://127.0.0.1:8083":
 smoke-pipeline *args:
     cargo run -q -p strimzi-ops -- smoke pipeline {{ args }}
 
+# Reproducible release gate; runtime smoke remains an explicit separate step.
+release-check: rust-check rust-test
+    cargo test -p strimzi-ops-core --no-default-features
+    cargo build --release --workspace --all-features
+    for file in examples/*.yaml examples/*.yml examples/*.json; do if [[ -f "$file" ]]; then target/release/strimzi-lint lint "$file"; fi; done
 # Run workspace tests (alias for rust-test)
 test: rust-test
 

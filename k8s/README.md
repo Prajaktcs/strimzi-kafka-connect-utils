@@ -299,11 +299,13 @@ partition-set changes do not combine old and new partitions. Reads are not atomi
 during production, commits or rebalances; they measure committed progress without
 observing or changing assignment membership.
 
-The current collector connects using plaintext Kafka and validates Kafka's cluster
-ID against Connect. Differing bootstrap overrides, consumer security/isolation
-overrides, unresolved config-provider values and unsupported Java regex syntax
-remain explicitly unavailable. For regex syntax and collection/display bounds,
-see [Monitor configuration and limitations](../README.md#monitor-ui).
+The collector defaults to plaintext Kafka and validates Kafka's cluster ID
+against Connect. Server-side TLS and SASL identities can be configured through
+[`kafka.sink_lag_security`](../README.md#secure-kafka-sink-consumer-group-lag).
+Differing bootstrap overrides, connector consumer security/isolation overrides,
+unresolved config-provider values and unsupported Java regex syntax remain
+explicitly unavailable. For regex syntax and collection/display bounds, see
+[Monitor configuration and limitations](../README.md#monitor-ui).
 
 #### Reproducible Isolated Backlog / Recovery Smoke
 

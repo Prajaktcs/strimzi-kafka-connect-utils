@@ -3,6 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod lag_security;
+
+pub use lag_security::{KafkaSaslMechanism, KafkaSecurityProtocol, SinkLagSecurity};
+
 use crate::{Error, Result};
 
 /// Kafka Connect / bootstrap settings loaded from secrets or CLI/UI flags.
@@ -13,6 +17,8 @@ pub struct ConnectionSettings {
     pub connect_cluster_name: Option<String>,
     /// Worker exporter membership; relative paths resolve beside secrets.toml.
     pub metrics_targets_file: Option<PathBuf>,
+    /// Server-side Kafka identity for read-only sink lag; never used for monitoring consume sessions.
+    pub sink_lag_security: SinkLagSecurity,
 }
 
 impl ConnectionSettings {
@@ -21,13 +27,36 @@ impl ConnectionSettings {
             path: path.to_path_buf(),
             source,
         })?;
-        let value: toml::Value = toml::from_str(&text).map_err(|err| Error::Secrets {
+        // TOML diagnostics may echo the source line, including a SASL password.
+        let value: toml::Value = toml::from_str(&text).map_err(|_| Error::Secrets {
             path: path.to_path_buf(),
-            reason: err.to_string(),
+            reason: "invalid secrets TOML".to_owned(),
         })?;
 
         let kafka = value.get("kafka");
+        let mut sink_lag_security = kafka
+            .and_then(|section| section.get("sink_lag_security"))
+            .map_or_else(
+                || Ok(SinkLagSecurity::default()),
+                |value| {
+                    value
+                        .clone()
+                        .try_into::<SinkLagSecurity>()
+                        .map_err(|_| Error::Secrets {
+                            path: path.to_path_buf(),
+                            reason: "invalid kafka.sink_lag_security configuration".to_owned(),
+                        })
+                },
+            )?;
+        sink_lag_security.resolve_paths(path.parent().unwrap_or_else(|| Path::new(".")));
+        sink_lag_security
+            .validate()
+            .map_err(|reason| Error::Secrets {
+                path: path.to_path_buf(),
+                reason: reason.to_owned(),
+            })?;
         Ok(Self {
+            sink_lag_security,
             connect_url: kafka
                 .and_then(|section| section.get("connect_url"))
                 .and_then(toml::Value::as_str)
@@ -181,5 +210,57 @@ mod tests {
             .metrics_targets_file
             .is_none());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn security_paths_resolve_beside_secrets_and_cli_preserves_identity() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("ca.pem"),
+            "PEM validated by librdkafka",
+        )
+        .unwrap();
+        let secrets = directory.path().join("secrets.toml");
+        fs::write(
+            &secrets,
+            "[kafka]\nbootstrap_servers='file:9093'\n[kafka.sink_lag_security]\nprotocol='SASL_SSL'\nca_file='ca.pem'\nsasl_mechanism='SCRAM-SHA-512'\nsasl_username='private-user'\nsasl_password='private-password'",
+        ).unwrap();
+        let settings = ConnectionSettings::from_secrets_file(&secrets)
+            .unwrap()
+            .merge_overrides(None, Some("override:9093".to_owned()), None);
+        assert_eq!(settings.bootstrap_servers.as_deref(), Some("override:9093"));
+        assert_eq!(
+            settings.sink_lag_security.protocol,
+            KafkaSecurityProtocol::SaslSsl
+        );
+        assert_eq!(
+            settings.sink_lag_security.ca_file,
+            Some(directory.path().join("ca.pem"))
+        );
+        assert_eq!(
+            settings.sink_lag_security.sasl_username.as_deref(),
+            Some("private-user")
+        );
+        let debug = format!("{settings:?}");
+        assert!(!debug.contains("private-user"));
+        assert!(!debug.contains("private-password"));
+    }
+
+    #[test]
+    fn secrets_diagnostics_never_echo_source_lines_or_values() {
+        let directory = tempfile::tempdir().unwrap();
+        let secrets = directory.path().join("secrets.toml");
+        for text in [
+            "[kafka.sink_lag_security]\nsasl_password='private-password' trailing-secret",
+            "[kafka.sink_lag_security]\nprotocol='private-protocol'\nsasl_password='private-password'",
+            "[kafka.sink_lag_security]\nprotocol='SSL'\nca_file='private-missing-path'",
+            "[kafka.sink_lag_security]\nprotocol='SSL'\nssl_endpoint_identification_algorithm='private-secret'",
+        ] {
+            fs::write(&secrets, text).unwrap();
+            let error = ConnectionSettings::from_secrets_file(&secrets).unwrap_err();
+            let output = format!("{error} {error:?}");
+            assert!(!output.contains("private-"));
+            assert!(!output.contains("trailing-secret"));
+        }
     }
 }

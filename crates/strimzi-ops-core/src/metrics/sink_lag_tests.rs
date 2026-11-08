@@ -135,6 +135,10 @@ fn rejects_wrong_cluster_security_and_isolation_overrides() {
         ("consumer.override.bootstrap.servers", "${env:BROKERS}"),
         ("consumer.override.security.protocol", "SASL_SSL"),
         ("consumer.override.sasl.jaas.config", "secret"),
+        ("consumer.override.sasl.mechanism", "SCRAM-SHA-512"),
+        ("consumer.override.sasl.username", "private-user"),
+        ("consumer.override.sasl.password", "private-password"),
+        ("consumer.override.security.providers", "private-provider"),
         (
             "consumer.override.ssl.truststore.location",
             "/private/store",
@@ -151,6 +155,57 @@ fn rejects_wrong_cluster_security_and_isolation_overrides() {
         "topics": "orders", "consumer.override.bootstrap.servers": " BROKER:9092 "
     }));
     assert!(same.error.is_none());
+}
+
+#[test]
+fn security_overrides_never_take_precedence_over_server_identity_or_stale_cache() {
+    let original = mapping(json!({"topics": "orders"}));
+    let changed = mapping(json!({
+        "topics": "orders",
+        "consumer.override.sasl.jaas.config": "private-password",
+    }));
+    let now = Instant::now();
+    let mut collector = SinkLagCollector::new(None, None);
+    collector.apply(
+        mappings(original.clone()),
+        vec![measured(&original, &[Some(2)])],
+        now,
+    );
+    collector.apply(
+        mappings(changed.clone()),
+        vec![changed.reading("orders-sink")],
+        now,
+    );
+    let snapshot = collector.snapshot_at(now);
+    assert_eq!(snapshot.state, MetricState::Unavailable);
+    assert_eq!(snapshot.connectors[0].total_lag, None);
+    assert_eq!(snapshot.age_secs, None);
+    assert!(!format!("{snapshot:?}").contains("private-password"));
+}
+
+#[test]
+fn server_identity_reconfiguration_discards_cached_offsets() {
+    use crate::settings::{KafkaSaslMechanism, KafkaSecurityProtocol};
+
+    let mapping = mapping(json!({"topics": "orders"}));
+    let mut collector = SinkLagCollector::new(None, None);
+    collector.apply(
+        mappings(mapping.clone()),
+        vec![measured(&mapping, &[Some(2)])],
+        Instant::now(),
+    );
+    let collector = collector.with_security(SinkLagSecurity {
+        protocol: KafkaSecurityProtocol::SaslSsl,
+        sasl_mechanism: Some(KafkaSaslMechanism::Plain),
+        sasl_username: Some("private-user".to_owned()),
+        sasl_password: Some("private-password".to_owned()),
+        ..SinkLagSecurity::default()
+    });
+    let snapshot = collector.snapshot();
+    assert!(snapshot.connectors.is_empty());
+    assert_eq!(snapshot.age_secs, None);
+    assert_eq!(snapshot.state, MetricState::Unavailable);
+    assert!(!format!("{collector:?} {snapshot:?}").contains("private-"));
 }
 
 #[test]

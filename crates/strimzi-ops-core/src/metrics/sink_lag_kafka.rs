@@ -12,6 +12,8 @@ use rdkafka::error::KafkaError;
 use rdkafka::metadata::Metadata;
 use rdkafka::{Offset, TopicPartitionList};
 
+use crate::settings::SinkLagSecurity;
+
 use super::sink_lag::{
     aggregate, partition_reading, safe_identifier, ConnectorLag, Mapping, MAX_PARTITIONS,
 };
@@ -25,6 +27,7 @@ const DEADLINE_ERROR: &str = "sink lag collection deadline exceeded";
 pub(super) fn collect(
     mappings: &BTreeMap<String, Mapping>,
     bootstrap: &str,
+    security: &SinkLagSecurity,
     cluster: &str,
     deadline: Instant,
 ) -> Vec<ConnectorLag> {
@@ -34,7 +37,7 @@ pub(super) fn collect(
         .and_then(|mapping| mapping.group.as_deref())
         .map(|group| {
             remaining(deadline)?;
-            let client = offset_client(bootstrap, group)?;
+            let client = offset_client(bootstrap, group, security)?;
             let metadata = client
                 .fetch_metadata(None, remaining(deadline)?)
                 .map_err(|_| "cannot fetch Kafka topic metadata")?;
@@ -61,6 +64,7 @@ pub(super) fn collect(
                     mapping,
                     metadata,
                     bootstrap,
+                    security,
                     deadline,
                     &mut used_partitions,
                 ),
@@ -82,6 +86,7 @@ fn collect_connector(
     mapping: &Mapping,
     metadata: &TopicMetadata,
     bootstrap: &str,
+    security: &SinkLagSecurity,
     deadline: Instant,
     used_partitions: &mut usize,
 ) -> Result<(), &'static str> {
@@ -121,7 +126,7 @@ fn collect_connector(
         .as_deref()
         .ok_or("sink consumer group mapping is unavailable")?;
     remaining(deadline)?;
-    let client = offset_client(bootstrap, group)?;
+    let client = offset_client(bootstrap, group, security)?;
     let mut request = TopicPartitionList::with_capacity(partitions.len());
     for (topic, partition) in &partitions {
         request.add_partition(topic, *partition);
@@ -191,8 +196,25 @@ impl ClientContext for QuietContext {
 
 impl ConsumerContext for QuietContext {}
 
-fn offset_client(bootstrap: &str, group: &str) -> Result<BaseConsumer<QuietContext>, &'static str> {
-    ClientConfig::new()
+fn offset_client(
+    bootstrap: &str,
+    group: &str,
+    security: &SinkLagSecurity,
+) -> Result<BaseConsumer<QuietContext>, &'static str> {
+    let config = offset_config(bootstrap, group, security)?;
+    config
+        .create_with_context(QuietContext)
+        .map_err(|_| "cannot initialize sink offset client")
+}
+
+fn offset_config(
+    bootstrap: &str,
+    group: &str,
+    security: &SinkLagSecurity,
+) -> Result<ClientConfig, &'static str> {
+    let mut config = ClientConfig::new();
+    apply_security(&mut config, security)?;
+    config
         .set("bootstrap.servers", bootstrap)
         .set("group.id", group)
         .set("enable.auto.commit", "false")
@@ -205,9 +227,40 @@ fn offset_client(bootstrap: &str, group: &str) -> Result<BaseConsumer<QuietConte
         // for an unassigned client that never issues payload fetches.
         .set("fetch.max.bytes", "1048576")
         .set("receive.message.max.bytes", "2097152")
-        .set("log_level", "0")
-        .create_with_context(QuietContext)
-        .map_err(|_| "cannot initialize sink offset client")
+        .set("log_level", "0");
+    Ok(config)
+}
+
+fn apply_security(
+    config: &mut ClientConfig,
+    security: &SinkLagSecurity,
+) -> Result<(), &'static str> {
+    config
+        .set("security.protocol", security.protocol.as_str())
+        .set("enable.ssl.certificate.verification", "true")
+        .set("ssl.endpoint.identification.algorithm", "https");
+    for (key, path) in [
+        ("ssl.ca.location", &security.ca_file),
+        ("ssl.certificate.location", &security.certificate_file),
+        ("ssl.key.location", &security.key_file),
+    ] {
+        if let Some(path) = path {
+            config.set(
+                key,
+                path.to_str().ok_or("sink lag TLS file path is invalid")?,
+            );
+        }
+    }
+    if let Some(mechanism) = security.sasl_mechanism {
+        config.set("sasl.mechanism", mechanism.as_str());
+    }
+    if let Some(username) = &security.sasl_username {
+        config.set("sasl.username", username);
+    }
+    if let Some(password) = &security.sasl_password {
+        config.set("sasl.password", password);
+    }
+    Ok(())
 }
 
 fn decode_metadata(metadata: &Metadata) -> Result<TopicMetadata, &'static str> {
@@ -252,6 +305,25 @@ fn decode_metadata(metadata: &Metadata) -> Result<TopicMetadata, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::KafkaSecurityProtocol;
+
+    #[test]
+    fn invalid_tls_material_has_only_a_static_safe_error() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), "private-invalid-pem-password").unwrap();
+        let security = SinkLagSecurity {
+            protocol: KafkaSecurityProtocol::Ssl,
+            ca_file: Some(file.path().to_owned()),
+            ..SinkLagSecurity::default()
+        };
+        assert!(security.validate().is_ok());
+        let reason = offset_client("localhost:9093", "sink-group", &security)
+            .err()
+            .unwrap();
+        assert_eq!(reason, "cannot initialize sink offset client");
+        assert!(!reason.contains("private"));
+        assert!(!reason.contains(file.path().to_str().unwrap()));
+    }
 
     #[test]
     fn shared_deadline_never_resets_per_partition() {

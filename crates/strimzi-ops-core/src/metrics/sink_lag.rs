@@ -121,7 +121,13 @@ impl SinkLagCollector {
         self.cached.connectors = Arc::default();
         self.cached.state = MetricState::Unavailable;
         self.cached.age_secs = None;
-        self.cached.error = Some("sink lag has not been collected");
+        self.cached.error = Some(
+            if self.connect_url.is_some() && self.bootstrap_servers.is_some() {
+                "sink lag has not been collected"
+            } else {
+                "sink lag requires Connect and Kafka bootstrap configuration"
+            },
+        );
         self
     }
 

@@ -7,6 +7,7 @@ use strimzi_ops_core::metrics::{
     MetricState, MetricsCollector, MetricsSnapshot, SinkLagCollector, SinkLagSnapshot,
     COLLECTION_INTERVAL,
 };
+use strimzi_ops_core::settings::SinkLagSecurity;
 use tokio::sync::watch;
 
 /// One cache and collector per application, independent of browser connections.
@@ -59,6 +60,7 @@ impl MetricsCache {
         path: Option<PathBuf>,
         connect_url: Option<String>,
         bootstrap_servers: Option<String>,
+        security: SinkLagSecurity,
     ) -> Option<tokio::task::JoinHandle<()>> {
         if path.is_none() && (connect_url.is_none() || bootstrap_servers.is_none()) {
             return None;
@@ -71,7 +73,7 @@ impl MetricsCache {
             let clients = tokio::task::spawn_blocking(move || {
                 (
                     MetricsCollector::new(path),
-                    SinkLagCollector::new(connect_url, bootstrap_servers),
+                    SinkLagCollector::new(connect_url, bootstrap_servers).with_security(security),
                 )
             })
             .await;
@@ -127,7 +129,9 @@ mod tests {
             (Some("http://localhost:8083".to_owned()), None),
             (None, Some("localhost:9092".to_owned())),
         ] {
-            assert!(cache.start(None, connect, bootstrap).is_none());
+            assert!(cache
+                .start(None, connect, bootstrap, SinkLagSecurity::default())
+                .is_none());
         }
         assert!(!cache.started.load(Ordering::Acquire));
         let latest = cache.latest();
@@ -144,10 +148,16 @@ mod tests {
             None,
             Some("http://localhost:8083".to_owned()),
             Some("localhost:9092".to_owned()),
+            SinkLagSecurity::default(),
         );
         assert!(handle.is_some());
         assert!(cache
-            .start(Some(PathBuf::from("unused")), None, None)
+            .start(
+                Some(PathBuf::from("unused")),
+                None,
+                None,
+                SinkLagSecurity::default(),
+            )
             .is_none());
         handle.unwrap().abort();
     }

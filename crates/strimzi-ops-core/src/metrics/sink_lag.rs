@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 
 #[cfg(feature = "kafka")]
 use crate::connect::ConnectClient;
+use crate::settings::SinkLagSecurity;
 
 #[cfg(feature = "kafka")]
 use super::REQUEST_TIMEOUT;
@@ -69,6 +70,7 @@ pub struct PartitionLag {
 pub struct SinkLagCollector {
     connect_url: Option<String>,
     bootstrap_servers: Option<String>,
+    security: SinkLagSecurity,
     #[cfg(any(feature = "kafka", test))]
     mappings: BTreeMap<String, Mapping>,
     measured_at: BTreeMap<String, Instant>,
@@ -80,6 +82,7 @@ impl fmt::Debug for SinkLagCollector {
         formatter
             .debug_struct("SinkLagCollector")
             .field("connectors", &self.cached.connectors.len())
+            .field("security_protocol", &self.security.protocol)
             .field(
                 "configured",
                 &(self.connect_url.is_some() && self.bootstrap_servers.is_some()),
@@ -93,6 +96,7 @@ impl SinkLagCollector {
         Self {
             connect_url,
             bootstrap_servers,
+            security: SinkLagSecurity::default(),
             #[cfg(any(feature = "kafka", test))]
             mappings: BTreeMap::new(),
             measured_at: BTreeMap::new(),
@@ -103,6 +107,22 @@ impl SinkLagCollector {
                 error: Some("sink lag requires Connect and Kafka bootstrap configuration"),
             },
         }
+    }
+
+    /// Use a server-owned identity for every metadata/offset client. Connector
+    /// security overrides remain unsupported; values are never copied from Connect.
+    #[must_use]
+    pub fn with_security(mut self, security: SinkLagSecurity) -> Self {
+        self.security = security;
+        // Reconfiguration is a new measurement identity, not a stale-data fallback.
+        #[cfg(any(feature = "kafka", test))]
+        self.mappings.clear();
+        self.measured_at.clear();
+        self.cached.connectors = Arc::default();
+        self.cached.state = MetricState::Unavailable;
+        self.cached.age_secs = None;
+        self.cached.error = Some("sink lag has not been collected");
+        self
     }
 
     pub fn collect(&mut self) -> SinkLagSnapshot {
@@ -126,6 +146,10 @@ impl SinkLagCollector {
         ) else {
             return;
         };
+        if let Err(reason) = self.security.validate() {
+            self.fail_all(reason);
+            return;
+        }
         if bootstrap.trim().is_empty() {
             self.fail_all("sink lag requires Kafka bootstrap configuration");
             return;
@@ -156,7 +180,13 @@ impl SinkLagCollector {
             }
         };
         let results = match cluster {
-            Ok(cluster) => super::sink_lag_kafka::collect(&mappings, bootstrap, &cluster, deadline),
+            Ok(cluster) => super::sink_lag_kafka::collect(
+                &mappings,
+                bootstrap,
+                &self.security,
+                &cluster,
+                deadline,
+            ),
             Err(reason) => mappings
                 .iter()
                 .map(|(name, mapping)| {
@@ -435,10 +465,8 @@ fn resolve_mapping(name: &str, config: &Map<String, Value>, bootstrap: &str) -> 
         if config.keys().any(|key| {
             key.starts_with("consumer.override.sasl.")
                 || key.starts_with("consumer.override.ssl.")
-                || matches!(
-                    key.as_str(),
-                    "consumer.override.security.protocol" | "consumer.override.isolation.level"
-                )
+                || key.starts_with("consumer.override.security.")
+                || key == "consumer.override.isolation.level"
         }) {
             return Err("sink consumer security or isolation overrides are unsupported");
         }

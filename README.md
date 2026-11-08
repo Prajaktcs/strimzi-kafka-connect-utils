@@ -244,6 +244,108 @@ Both tables share the shared display limits and state vocabulary (stale values
 are historical, collection errors show no values). See [queue and backpressure
 measurements, exporter notes and the induced-backlog smoke check](k8s/README.md#queue-and-backpressure-measurements).
 
+### Secure Kafka sink consumer-group lag
+
+The Monitor **Kafka consumer-group lag** panel observes committed offsets and
+partition ends server-side, independently of JMX and notification consumption.
+It never joins a group, consumes records, commits/resets offsets or creates
+topics. Connect discovery and Kafka cluster-ID comparison must succeed; a
+different cluster is rejected even when topic/group names match.
+
+Plaintext remains the default. For a secured broker, keep a private secrets file
+(`chmod 600 .local/secure-lag.toml`) and configure, for example:
+
+```toml
+[kafka]
+connect_url = "https://connect.example.com"
+bootstrap_servers = "broker.example.com:9093"
+
+[kafka.sink_lag_security]
+protocol = "SASL_SSL"
+ca_file = "kafka-ca.pem"
+sasl_mechanism = "SCRAM-SHA-512"
+sasl_username = "lag-reader"
+sasl_password = "replace-with-private-credential"
+# Optional TLS client authentication; PEM certificate and unencrypted key, paired:
+# certificate_file = "lag-reader.crt"
+# key_file = "lag-reader.key"
+```
+
+Security applies identically to metadata, cluster identity, group offset fetches
+and partition watermark clients. Supported protocols are `PLAINTEXT`, `SSL`,
+`SASL_PLAINTEXT`, and `SASL_SSL`; mechanisms are `PLAIN`, `SCRAM-SHA-256`, and
+`SCRAM-SHA-512`. `SASL_PLAINTEXT` does **not** encrypt traffic (PLAIN exposes
+credentials); use TLS outside a trusted isolated network. Builds enable
+librdkafka's OpenSSL support for TLS and built-in SCRAM; Cyrus/GSSAPI is not
+needed. On macOS install `openssl@3` as well as `cmake`/`pkg-config` if unavailable.
+
+TLS verifies both certificate chains and broker hostnames, with no disable switch.
+Omit `ca_file` to use librdkafka/OpenSSL's system CA discovery. All advertised
+broker addresses must be reachable and present in certificate SANs. Relative PEM
+paths resolve beside the secrets file; provide regular readable files and keep
+private keys/credentials owner-readable only. SASL requires all three SASL fields;
+non-SASL protocols reject them. Non-TLS protocols reject TLS files. Unknown fields,
+mechanisms, unresolved config-provider expressions, unreadable files, and
+unpaired client certificate/key fail safely. PEM/key parsing failures and
+authentication failures become generic collection errors; foreign diagnostics,
+paths and credentials are not displayed. Restart the UI after secrets changes.
+CLI bootstrap overrides preserve this server-side security identity.
+
+Connector `consumer.override.sasl.*`, `ssl.*`, `security.*`, and
+`isolation.level` are rejected as unavailable, even if they appear compatible;
+Java JAAS/truststore settings are not imported or guessed. A bootstrap override
+is accepted only when its normalized address set matches the collector's.
+No arbitrary librdkafka map, verification bypass, encrypted-key password, JKS,
+PKCS12, Kerberos/GSSAPI, OAuth, or per-connector identities are supported.
+Grant the observer only topic Describe/read-offset and group Describe permissions
+required by the broker; no group membership or write permissions are needed.
+This configuration is **only for sink lag**, not Connect REST authentication,
+notification consumption, snapshot producers, or other Kafka CLI commands.
+
+Requests keep their shared bounded collection deadline. Missing commits remain
+unavailable, never zero; failures preserve same-mapping values only as stale.
+Group/topic/security-override mapping changes discard old values rather than
+attaching them to a different identity. No credentials appear in collector or
+settings `Debug`; malformed secrets diagnostics do not echo TOML source lines.
+
+#### Secure broker smoke (isolated test resources only)
+
+Use a disposable secured broker and Connect worker on that same cluster, with a
+known committed sink group and a known nonzero backlog (see the
+[isolated lag smoke](k8s/README.md#host-kafka-metadata-and-sink-consumer-group-lag)). Do not reset an
+existing group or change shared connectors. Use private Java command-config
+files for independent `kafka-consumer-groups.sh --describe` observations.
+
+```bash
+# Does not start local plaintext forwards or alter the broker:
+cargo run -p strimzi-ui -- --secrets .local/secure-lag.toml --port 8502
+# In a second terminal, after the first bounded collection round:
+curl --fail --max-time 5 http://127.0.0.1:8502/monitor/metrics
+```
+
+Compare every reported partition's committed/end offsets and aggregate with the
+independent broker observation; verify the observer leaves commits and group
+membership unchanged. Repeat with `SSL` (including paired client PEMs on an mTLS
+listener), `SASL_PLAINTEXT`, and `SASL_SSL`, testing PLAIN and both SCRAM mechanisms
+where enabled. Restart with a wrong password, wrong existing CA PEM, and a broker
+hostname absent from the SAN: each must fail without publishing fresh offsets
+or exposing secrets in HTML/stderr. An absent TLS file or invalid setting must
+fail startup with a generic diagnostic. Finally point Connect discovery at a
+different cluster ID: offsets must be rejected, not reported from the wrong
+cluster. Retain redacted HTML/offset evidence, never private configuration files.
+
+Local verification exercised the UI's real lag collector against a disposable
+Kafka 4.3.1 broker, with a discovery-only Connect HTTP fixture supplying its
+cluster ID and sink mapping. SSL, required-client-certificate mTLS, and both
+SASL protocols with PLAIN/SCRAM-SHA-256/SCRAM-SHA-512 reported committed offset
+1, partition end 3 and complete lag 2. Independent group descriptions retained
+offset 1 and no active members across collection. Wrong password, CA, hostname,
+missing required client certificate and mismatched cluster ID all produced
+collection errors without fresh offsets. Invalid settings/missing PEM files
+failed startup without echoing private values. This verifies the observer's
+Kafka transport path, not a secured Connect REST authentication integration.
+
+
 ## Usage
 
 ### Linter (CLI)

@@ -30,6 +30,7 @@ impl AppState {
             self.settings.metrics_targets_file.clone(),
             self.settings.connect_url.clone(),
             self.settings.bootstrap_servers.clone(),
+            self.settings.sink_lag_security.clone(),
         )
     }
 

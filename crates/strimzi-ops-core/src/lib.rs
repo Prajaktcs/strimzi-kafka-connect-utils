@@ -9,6 +9,8 @@ pub mod monitor;
 pub mod parse;
 pub mod schema;
 pub mod settings;
+#[cfg(feature = "kafka")]
+pub mod smoke;
 pub mod validate;
 
 use std::io;

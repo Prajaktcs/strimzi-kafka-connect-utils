@@ -309,6 +309,81 @@ explicitly unavailable. For regex syntax and collection/display bounds, see
 
 #### Reproducible Isolated Backlog / Recovery Smoke
 
+Run the automated, isolated **PostgreSQL → Kafka → Iceberg** check first:
+
+```bash
+# Requires an already healthy local stack and its host forwards.
+just port-forward-all
+just smoke-pipeline
+# Equivalent CLI; global connection flags/secrets.toml are supported:
+cargo run -q -p strimzi-ops -- smoke pipeline --phase-timeout-secs 300
+```
+
+Install the `duckdb` CLI (tested local recipe: 1.5.6) and `kubectl` on `PATH`.
+The command checks Kubernetes, PostgreSQL, both sample connector templates,
+Connect/Kafka cluster identity, the host read-only lag collector, and DuckDB's
+`iceberg`/`httpfs` extensions and RustFS catalog **before mutations**. Extension
+installation may need network access. It deliberately supports this repository's
+local PostgreSQL (`postgres-0`, `source_db`), broker
+(`my-cluster-dual-role-0`), and RustFS endpoint/credentials from the recipe below;
+it does not retarget an arbitrary production stack. Namespace defaults to `kafka`
+(`--namespace`); Connect/Kafka host defaults are `127.0.0.1:8083`/`:9092`
+unless overridden by existing connection settings.
+Templates with `producer.override.bootstrap.servers` or
+`iceberg.kafka.bootstrap.servers` are rejected before mutations, even when they
+appear to name the same cluster. Smoke writers must use the verified worker
+cluster rather than an independently configured destination.
+
+Each run gets a UUID-based source table, cloned Debezium source with its own
+replication slot and filtered publication, two-partition input topic, cloned
+Iceberg sink/table, input group and control identities. The isolated producer
+uses Kafka's round-robin partitioner (the worker must permit producer overrides).
+The source replication slot must be active before any inserts; task `RUNNING`
+alone does not establish a CDC starting point. After two deterministic streaming
+inserts, both input partitions must have commits and fresh zero lag, and DuckDB
+must independently read both CDC rows.
+Only the isolated sink is then paused through KafkaConnector desired state.
+Another 100 PostgreSQL inserts must produce **50 lag per partition / 100 total**
+with unchanged baseline commits. Two read-only collector rounds in a stable
+paused window must leave CLI-observed member IDs, assignments and offsets
+unchanged. Resume must advance both commits to the same end offsets with fresh
+**0 / 0 / complete 0**. Finally DuckDB reads the actual Iceberg files through the
+REST catalog/S3 and requires **exactly 102** ordered rows with the expected
+`id`, `name`, `email`, and `op = 'c'`; missing, duplicate, snapshot or altered rows
+fail the command. `RUNNING` or zero lag alone never counts as durable success.
+
+Every command is bounded (30 seconds), and each poll phase has a separate
+30–900-second deadline (default 300). Failures exit nonzero. Evidence is retained
+under `.local/smoke/pipeline-smoke-<uuid>/` (`--evidence-root` changes the parent),
+including resource IDs, command stdout/stderr, exact measured offsets, DuckDB
+rows, and `success.json` or `failure.txt`. **Evidence is private (0700 directory,
+0600 files on Unix) and includes cloned connector credentials; do not publish it.**
+Resources are retained on **success and failure**; no existing group offsets,
+sample configs, source rows, tables, shared topics, PVCs or namespaces are reset
+or deleted. Existing broad sample source capture may discover the new table;
+the smoke never reconfigures that source or sends rows to the sample users table.
+
+For deliberate targeted cleanup, use only the exact names in that run's
+`resources.json`. Delete its source/sink KafkaConnectors first, wait until the
+source replication slot is inactive, then drop only its PostgreSQL slot,
+publication and source table. Use the read-only group CLI to enumerate the run's
+input/control groups before deleting only those groups, and delete only the
+run's input/control topics (and any UUID-prefixed source auxiliary topics).
+Drop only its Iceberg table through the catalog; remove its warehouse data only
+if intentionally purging that run. Do not use namespace deletion, wildcard
+warehouse deletion or offset resets. Retained slots consume PostgreSQL WAL, so
+do not leave failed runs indefinitely without deliberate cleanup.
+
+The automated `just smoke-pipeline` command passed against the pinned local stack:
+known baseline commits, exact paused backlog, unchanged input-group offsets and
+membership across two observer rounds, committed recovery, and all 102 expected
+CDC rows independently read through DuckDB. Monitor showed the paused backlog
+and recovered zero in the same browser document. The run also exercised the
+replication-slot readiness check and DuckDB's multi-statement JSON decoder.
+
+The following older manual sink-only recipe is useful for inspecting the UI,
+but is **not** a substitute for the automated source-to-durable-row proof.
+
 These are **execution instructions, not a claim of a completed smoke run**.
 Require a healthy deployed sample Iceberg sink/RustFS, `jq`, `kcat`, reachable
 host metadata and an available UI `/monitor`. Use a new name per run, and keep

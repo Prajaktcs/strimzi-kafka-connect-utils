@@ -182,6 +182,11 @@ lint-config file:
 connectors-list connect_url="http://127.0.0.1:8083":
     cargo run -q -p strimzi-ops -- --connect-url {{ connect_url }} connectors list
 
+
+# Isolated PostgreSQL → Kafka → Iceberg proof; retains resources and evidence.
+smoke-pipeline *args:
+    cargo run -q -p strimzi-ops -- smoke pipeline {{ args }}
+
 # Run workspace tests (alias for rust-test)
 test: rust-test
 

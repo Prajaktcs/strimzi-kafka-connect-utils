@@ -633,6 +633,8 @@ Kafka-backed commands need **librdkafka** (`brew install librdkafka cmake pkg-co
 
 Rust code follows [Canonical Rust best practices](https://canonical.github.io/rust-best-practices/introduction.html); see [docs/rust-best-practices.md](docs/rust-best-practices.md) and [AGENTS.md](AGENTS.md). Cursor loads `.cursor/rules/` automatically in future sessions.
 
+Before release, follow the [release checkpoint and required evidence](docs/release-checklist.md).
+
 ## Project Structure
 
 ```

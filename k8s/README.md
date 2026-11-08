@@ -376,6 +376,7 @@ membership across two observer rounds, committed recovery, and all 102 expected
 CDC rows independently read through DuckDB. Monitor showed the paused backlog
 and recovered zero in the same browser document. The run also exercised the
 replication-slot readiness check and DuckDB's multi-statement JSON decoder.
+`just release-check` passed, including core tests with Kafka disabled.
 
 The following older manual sink-only recipe is useful for inspecting the UI,
 but is **not** a substitute for the automated source-to-durable-row proof.

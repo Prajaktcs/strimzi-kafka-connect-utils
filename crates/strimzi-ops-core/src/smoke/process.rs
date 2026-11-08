@@ -121,20 +121,21 @@ impl Runner {
                 source,
             })?;
         loop {
-            match child.try_wait() {
+            let status = child.try_wait();
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Error::Timeout {
+                    label: label.to_owned(),
+                    evidence: self.directory.clone(),
+                });
+            }
+            match status {
                 Ok(Some(status)) if status.success() => break,
                 Ok(Some(_)) | Err(_) => {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(Error::Command {
-                        label: label.to_owned(),
-                        evidence: self.directory.clone(),
-                    });
-                }
-                Ok(None) if Instant::now() >= deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(Error::Timeout {
                         label: label.to_owned(),
                         evidence: self.directory.clone(),
                     });
@@ -152,6 +153,14 @@ impl Runner {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_completion_observed_after_an_expired_deadline() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut runner = Runner::new(directory.path().join("evidence")).unwrap();
+        let result = runner.command("expired", "sh", &["-c", "exit 0"], None, Duration::ZERO);
+        assert!(matches!(result, Err(Error::Timeout { .. })));
+    }
 
     #[test]
     fn enforces_deadline_when_child_never_reads_maximum_input() {
